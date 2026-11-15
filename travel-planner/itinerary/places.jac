@@ -48,7 +48,6 @@ def:pub ItineraryPlaces(places: list[ItemView], place: ItemView | None, destinat
     hasMapAddress = bool(address) and not address.startswith("fixture:");
     return <section className="card itinerary-places" aria-labelledby="itinerary-places-heading">
         <div className="places-heading">
-            <p className="eyebrow">EXPLORE YOUR STOPS</p>
             <h2 id="itinerary-places-heading" tabIndex={-1}>Places in {journeyCity(place, destination)}</h2>
             <p>{shortDate(day) if day else "All days"} <span aria-hidden="true">·</span>
                 {" " + str(len(places)) + (" place" if len(places) == 1 else " places")}</p>

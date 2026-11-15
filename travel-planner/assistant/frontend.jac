@@ -70,13 +70,13 @@ def:pub ChatSidebar(trip_id: str, destination: str, onUpdate: any, reload: int =
                     {(<button type="button" className="text-button" disabled={busy} onClick={lambda { apiKey = ""; keyInput = ""; keyError = ""; failure = ""; }}>Clear key</button>) if apiKey else None}</div>
                 {(<p className="chat-error" role="alert">{keyError}</p>) if keyError else None}
             </form>
-            <small>Your key is used for your AI requests and kept in memory while this assistant is open. Refreshing clears it. API usage is billed to your OpenAI account.</small>
+            <small>Your key stays in this tab's memory and is cleared when you refresh. Usage is billed to your OpenAI account.</small>
             <p role="status">{"Using your key. It will be checked when you send a message." if apiKey else "Using the app owner’s key. Add yours to use your own account." if data.get("config", {}).get("configured", False) else "Add your key to start chatting."}</p>
         </details>
         <div className="chat-messages" role="log" aria-label="Conversation" aria-busy={busy or loading}>
-            {(<div className="chat-welcome"><span className="chat-spark">✦</span><h3>A little help for every turn.</h3>
-                <p>Ask about your destination, build an itinerary, or tell me what changed. I’ll help you find a way forward.</p>
-                <small>Answers use your active trip and recent conversation.</small></div>) if len(data.get("messages", [])) == 0 else None}
+            {(<div className="chat-welcome"><span className="chat-spark">✦</span><h3>Ask about this trip</h3>
+                <p>Ask a question, request an itinerary, or describe a disruption to get a revised plan.</p>
+                <small>Answers use this trip's details and your recent messages.</small></div>) if len(data.get("messages", [])) == 0 else None}
             {[
                 <article key={message["id"]} className={"chat-message " + message["role"]}>
                     <p className="message-author">{"YOU" if message["role"] == "user" else "JACPLAN ASSISTANT"}
@@ -105,14 +105,14 @@ def:pub ChatSidebar(trip_id: str, destination: str, onUpdate: any, reload: int =
                 </select>
                 <label className="sr-only" htmlFor="ai-message">Message the travel assistant</label>
                 <textarea id="ai-message" value={text} rows={3} maxLength={4000} disabled={busy}
-                    placeholder="Tell me what you have in mind…" onChange={lambda (e: ChangeEvent) { text = e.target.value; }}/>
+                    placeholder="Type your question or request…" onChange={lambda (e: ChangeEvent) { text = e.target.value; }}/>
                 <div className="composer-actions"><label className="search-toggle"><input type="checkbox" checked={search} disabled={busy}
                     onChange={lambda (e: ChangeEvent) { search = e.target.checked; }}/> Search the web</label>
                     <button className="primary" type="submit" disabled={busy or externalBusy or loading or not text.strip() or not (apiKey or data.get("config", {}).get("configured", False))}>
                         {"Working…" if busy else "Send ↗"}</button></div>
             </form>
-            <small>Turn off web search for a faster draft using estimates. Your pet and pace preferences still apply.</small>
-            <small>AI suggestions need review. Nothing is booked or changed by a chat message.</small>
+            <small>Without web search, drafts are faster but use estimated prices.</small>
+            <small>Chat never books or changes anything. You review every draft first.</small>
         </div>
     </aside>
 }
@@ -137,29 +137,29 @@ def:pub AIPlanner(data: dict[str, any], currency: str, onCompose: any, onReview:
     history = [draft for draft in data.get("drafts", []) if draft["status"] != "pending"];
     preferences = data.get("preferences", {"pet_friendly": False, "pace": "balanced"});
     <section className="ai-planner" aria-label="AI planning workspace">
-        <div className="card ai-planner-intro"><p className="eyebrow">ONE TRIP. MORE POSSIBILITIES.</p><h2>Make room for a better plan.</h2>
-            <p>Build your itinerary, prepare a backup, or adjust when life happens. Your assistant works with the same trip, budget and conversation.</p>
+        <div className="card ai-planner-intro"><h2>Plan with the assistant</h2>
+            <p>Set your preferences, then choose a task. The assistant drafts a plan for you to review below.</p>
             <div className="planning-preferences" aria-label="Trip planning preferences">
                 <div className="pet-preference"><button type="button" className="pet-toggle" aria-pressed={preferences["pet_friendly"]}
                     disabled={busy or not data.get("trip_version", 0)} onClick={lambda { onPreferences(not preferences["pet_friendly"], preferences["pace"]); }}>
                     {"✓ Pet-friendly" if preferences["pet_friendly"] else "Pet-friendly"}<span>{"On" if preferences["pet_friendly"] else "Off"}</span></button>
-                    <small>Plan stays, meals and activities with a pet in mind. Venue policies still need confirmation.</small></div>
+                    <small>Prefer pet-friendly stays, meals and activities. Confirm pet policies with each venue.</small></div>
                 <fieldset className="pace-preference"><legend>Trip pace</legend><div className="pace-buttons">{[
                     <button key={pace} type="button" aria-pressed={preferences["pace"] == pace} disabled={busy or not data.get("trip_version", 0)}
                         onClick={lambda { onPreferences(preferences["pet_friendly"], pace); }}>{"Intense" if pace == "intense" else "Balanced" if pace == "balanced" else "Relax"}</button>
                     for pace in ["intense", "balanced", "relax"]
                 ]}</div><small>{"Fuller days with 4–6 main activities" if preferences["pace"] == "intense" else "1–2 main activities with plenty of free time" if preferences["pace"] == "relax" else "2–3 main activities with time to unwind"}</small></fieldset>
-                <p className="preference-note">Saved for this trip and used automatically in AI planning, alternatives and replanning.</p>
+                <p className="preference-note">Saved for this trip and used in every AI draft.</p>
             </div>
             <div className="ai-quick-actions">
-                <button type="button" disabled={busy} onClick={lambda { onCompose("plan", "Build an itinerary for my trip using my saved preferences. Keep my existing arrangements and stay within my budget."); }}><span>◎</span><strong>Plan my trip</strong><small>Turn ideas into an itinerary</small></button>
-                <button type="button" disabled={busy} onClick={lambda { onCompose("backup", "Prepare two different backup plans for the vulnerable parts of my itinerary. Explain when I would use each one."); }}><span>⇄</span><strong>Find alternatives</strong><small>Have another way to go</small></button>
-                <button type="button" disabled={busy} onClick={lambda { onCompose("replan", "My plans changed: "); }}><span>↗</span><strong>Something changed</strong><small>Repair the affected plans</small></button>
+                <button type="button" disabled={busy} onClick={lambda { onCompose("plan", "Build an itinerary for my trip using my saved preferences. Keep my existing arrangements and stay within my budget."); }}><span>◎</span><strong>Plan my trip</strong><small>Draft a full itinerary</small></button>
+                <button type="button" disabled={busy} onClick={lambda { onCompose("backup", "Prepare two different backup plans for the vulnerable parts of my itinerary. Explain when I would use each one."); }}><span>⇄</span><strong>Find alternatives</strong><small>Backups for parts that could go wrong</small></button>
+                <button type="button" disabled={busy} onClick={lambda { onCompose("replan", "My plans changed: "); }}><span>↗</span><strong>Something changed</strong><small>Fix the plans a disruption affects</small></button>
             </div>
-            <button type="button" className="text-button" disabled={busy} onClick={lambda { onCompose("edit", "Change my trip details: "); }}>Edit dates, destination, budget or other trip details ↗</button>
+            <button type="button" className="text-button" disabled={busy} onClick={lambda { onCompose("edit", "Change my trip details: "); }}>Change dates, destination, budget or other trip details ↗</button>
         </div>
-        <div className="section-heading ai-draft-heading"><div><p className="eyebrow">REVIEW BEFORE YOU SAVE</p><h2>Your proposed plans</h2></div><span className="count-pill">{str(len(pending)) + " to review"}</span></div>
-        {(<div className="card ai-drafts-empty"><span>✦</span><h3>Good plans start with a conversation.</h3><p>Choose an action above, or select a planning mode in the conversation sidebar. Your proposals will appear here.</p></div>) if not pending else None}
+        <div className="section-heading ai-draft-heading"><div><h2>Drafts to review</h2></div><span className="count-pill">{str(len(pending)) + " to review"}</span></div>
+        {(<div className="card ai-drafts-empty"><span>✦</span><h3>No drafts yet</h3><p>Choose a task above or send a request in the assistant panel. Drafts appear here.</p></div>) if not pending else None}
         <div className="ai-drafts">{[
             <article key={draft["id"]} className="card ai-draft"><div className="ai-draft-top"><span className="ai-mode-tag">{label(draft["mode"])}</span><span className="ai-estimate-tag">Estimated costs</span></div>
                 <h3>{draft["title"]}</h3><p>{draft["summary"]}</p>
@@ -171,12 +171,12 @@ def:pub AIPlanner(data: dict[str, any], currency: str, onCompose: any, onReview:
                     <div key={edit["field"]}><strong>{edit["label"]}</strong><span>{detail(edit["before"], edit["field"], draft["trip_before"]["currency"])}</span><span aria-hidden="true">→</span><span>{detail(edit["after"], edit["field"], draft["trip_after"]["currency"])}</span></div>
                     for edit in draft.get("trip_edits", [])
                 ]}</div>) if len(draft.get("trip_edits", [])) > 0 else None}
-                <div className="ai-cost-comparison"><div><small>Current + reserve</small><strong>{money(draft["original_total_cents"], draft.get("trip_before", {}).get("currency", currency))}</strong></div><span>→</span><div><small>Proposed + reserve</small><strong>{money(draft["total_cents"], draft.get("trip_after", {}).get("currency", currency))}</strong></div></div>
+                <div className="ai-cost-comparison"><div><small>Current total, with reserve</small><strong>{money(draft["original_total_cents"], draft.get("trip_before", {}).get("currency", currency))}</strong></div><span>→</span><div><small>Proposed total, with reserve</small><strong>{money(draft["total_cents"], draft.get("trip_after", {}).get("currency", currency))}</strong></div></div>
                 <p className="ai-checks">✓ {draft["checks"].join(" · ")}</p>
                 {(<form className="ai-price-form" onSubmit={lambda (e: FormEvent) { savePrices(e, draft); }}>
-                    <h4>This older draft has missing estimates</h4>
-                    <button type="button" className="secondary" disabled={busy} onClick={lambda { onCompose(draft["mode"], "Complete the exact draft titled " + draft["title"] + " with realistic numeric whole-party cost estimates for every item. Preserve its schedule and stay within my budget. Clearly mark approximate prices. I want a complete plan I can save and then edit."); }}>Complete this plan with GPT ↗</button>
-                    <p>Or enter your own whole-party estimates in {currency}, including fees. Use 0 only for a free item.</p>
+                    <h4>Some prices are missing</h4>
+                    <button type="button" className="secondary" disabled={busy} onClick={lambda { onCompose(draft["mode"], "Complete the exact draft titled " + draft["title"] + " with realistic numeric whole-party cost estimates for every item. Preserve its schedule and stay within my budget. Clearly mark approximate prices. I want a complete plan I can save and then edit."); }}>Ask AI to fill in prices ↗</button>
+                    <p>Or enter each price yourself: the total for your whole group in {currency}, including fees. Enter 0 only if the item is free.</p>
                     {[
                         <div key={str(index)}><label htmlFor={"estimate-" + draft["id"] + "-" + str(index)}>{change["after"]["title"] + " · " + change["after"]["date"]}</label>
                             <input id={"estimate-" + draft["id"] + "-" + str(index)} type="number" min="0" max="100000000" step="0.01" required={True}
@@ -185,7 +185,7 @@ def:pub AIPlanner(data: dict[str, any], currency: str, onCompose: any, onReview:
                         for (index, change) in enumerate(draft["changes"]) if change["price_unknown"]
                     ]}
                     {(<p className="chat-error" role="alert">{priceErrors[draft["id"]]}</p>) if priceErrors.get(draft["id"], "") else None}
-                    <button className="secondary" type="submit" disabled={busy}>Check estimates & budget</button>
+                    <button className="secondary" type="submit" disabled={busy}>Check prices and budget</button>
                 </form>) if not draft["can_apply"] else None}
                 <div className="ai-changes">{[
                     <div key={str(index)} className="ai-change"><span className="change-type">{"EDIT" if change["item_id"] else "ADD"}</span><div>
@@ -199,12 +199,12 @@ def:pub AIPlanner(data: dict[str, any], currency: str, onCompose: any, onReview:
                 <div className="ai-draft-warning">{[<p key={warning}>{warning}</p> for warning in draft["warnings"]]}{[<p key={issue}>{issue}</p> for issue in draft["issues"]]}</div>
                 <label className="ai-ack"><input type="checkbox" checked={acknowledged.get(draft["id"], False)} disabled={busy or not draft["can_apply"]}
                     onChange={lambda (e: ChangeEvent) { acknowledged = {**acknowledged, draft["id"]: e.target.checked}; }}/>
-                    <span>I reviewed the proposed changes and understand that estimates and travel details need confirmation.</span></label>
+                    <span>I've reviewed these changes. Prices and travel details are estimates until confirmed.</span></label>
                 <div className="ai-review-actions"><button type="button" className="primary" disabled={busy or not draft["can_apply"] or not acknowledged.get(draft["id"], False)}
                     onClick={lambda { onReview(draft["id"], True, acknowledged.get(draft["id"], False)); }}>Save this plan</button>
                     <button type="button" className="secondary" disabled={busy} onClick={lambda { onReview(draft["id"], False, False); }}>Keep current plan</button>
                     <button type="button" className="text-button" disabled={busy} onClick={lambda { onCompose(draft["mode"], "Please revise the proposal titled " + draft["title"] + ". I would prefer: "); }}>Refine in chat ↗</button></div>
-                <small className="ai-expiry">Drafts expire after 30 minutes and become unavailable when your trip changes.</small>
+                <small className="ai-expiry">Drafts expire after 30 minutes, or sooner if the trip changes.</small>
             </article> for draft in pending
         ]}</div>
         {(<details className="card ai-draft-history"><summary>Previous proposals ({str(len(history))})</summary>{[

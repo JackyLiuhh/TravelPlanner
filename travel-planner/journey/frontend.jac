@@ -80,14 +80,14 @@ def:pub RouteEditor(trip: any, data: any, onSaved: any, onPlan: any, disabled: b
         finally { saving = False; }
     }
     <section className="card route-editor" aria-label="Journey route">
-        <div className="section-heading"><div><p className="eyebrow">CITIES & TRANSFERS</p><h2>Your journey</h2></div>
+        <div className="section-heading"><div><h2>Your route</h2></div>
             {(<button type="button" className="secondary" disabled={disabled} onClick={begin}>{"Edit route" if data.get("journey") else "Set up route"}</button>) if not editing else None}</div>
         {(<div><p className="route-summary">{journeyLabel(data["journey"])}</p>
             <ol className="route-stay-summary">{[<li key={stop["id"]}><strong>{stop["city"]}</strong><span>{stop["arrival_date"] + " – " + stop["departure_date"] + " · " + stop["zone"]}</span></li> for stop in data["journey"]["stops"]]}</ol>
             {(<ul className="route-issues">{[<li key={issue}>{issue}</li> for issue in data.get("issues", [])]}</ul>) if data.get("issues") else None}
             <button type="button" className="secondary" disabled={disabled or editing} onClick={lambda { onPlan("plan", "Plan the complete saved journey, including outbound travel, each city stay, intercity transport and the return if specified. Keep saved arrangements and show the full schedule for review."); }}>Plan this journey with AI</button>
         </div>) if data.get("journey") and not editing else None}
-        {(<p className="section-caption">Set your departure, destination cities and return, or ask the assistant to propose the complete route. Times will be checked in each city's local time zone.</p>) if not data.get("journey") and not editing else None}
+        {(<p className="section-caption">Add where you start, the cities you'll visit and where you return. Times use each city's local time zone. You can also ask the assistant to suggest a route.</p>) if not data.get("journey") and not editing else None}
         {(<form onSubmit={save}>
             <fieldset disabled={saving or disabled}><legend>Departure</legend>
                 <RoutePlace id="route-origin" value={draft["origin"]} onChange={lambda (field: str, value: any) { update("origin", 0, field, value); }}/>
@@ -105,7 +105,7 @@ def:pub RouteEditor(trip: any, data: any, onSaved: any, onPlan: any, disabled: b
                 next = copy(draft); next["return_to"] = copy(next["origin"]) if e.target.checked else None; draft = rebuild(next);
             }}/> Include return travel</label>
             {(<fieldset disabled={saving or disabled}><legend>Return to</legend><RoutePlace id="route-return" value={draft["return_to"]} onChange={lambda (field: str, value: any) { update("return_to", 0, field, value); }}/></fieldset>) if draft["return_to"] else None}
-            <p className="section-caption">Allow time before departure for check-in and access, and after arrival for baggage and onward travel. Durations and schedules are planning estimates until checked against a source.</p>
+            <p className="section-caption">For each leg, add buffer time before departure (check-in, security) and after arrival (baggage, getting to your next stop). Times are estimates until confirmed.</p>
             {[
                 <fieldset key={str(index)} disabled={saving or disabled}><legend>{label(leg["from_id"]) + " → " + label(leg["to_id"])}</legend>
                     <label>Transport<select aria-label={"Leg " + str(index+1) + " transport"} value={leg["mode"]} onChange={lambda (e: ChangeEvent) { update("legs", index, "mode", e.target.value); }}>{[<option key={mode} value={mode}>{mode}</option> for mode in ["flight", "train", "drive", "bus", "ferry"]]}</select></label>

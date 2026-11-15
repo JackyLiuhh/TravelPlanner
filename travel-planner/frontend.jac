@@ -185,7 +185,7 @@ def:pub app -> JsxElement {
         try {
             aiData = await assistant_update_prices(trip_id=selected, draft_id=draft_id, prices=prices);
             aiReload += 1;
-            notice = "Estimates checked. Review the total, then select the checkbox to save your plan.";
+            notice = "Prices checked. Review the total, then tick the checkbox to save the plan.";
             return "";
         } except Exception as exc { error = str(exc); return str(exc); }
         finally { busy = False; }
@@ -196,7 +196,7 @@ def:pub app -> JsxElement {
         try {
             aiData = await assistant_save_preferences(trip_id=selected, pet_friendly=pet, pace=pace, expected_version=aiData["trip_version"]);
             aiReload += 1;
-            notice = "Planning preferences saved. Your next AI request will use them.";
+            notice = "Preferences saved. AI drafts for this trip will use them.";
         } except Exception as exc { error = str(exc); aiReload += 1; }
         finally { busy = False; }
     }
@@ -252,7 +252,7 @@ def:pub app -> JsxElement {
     <div className={"app-shell" + (" with-assistant" if current else "")} data-reviewing={bool(reviewRequest)}>
         <aside className="sidebar">
             <a className="brand" href="#"><span className="brand-icon">↗</span>Jacplan</a>
-            <p className="brand-caption">Travel planning workspace.</p>
+            <p className="brand-caption">Plan trips and handle disruptions.</p>
             <div className="sidebar-heading"><span>YOUR TRIPS</span><span>{str(len(trips))}</span></div>
             <div className="trip-list">{[
                 <button type="button" key={trip.id} className="trip-card" data-active={trip.id == selected}
@@ -264,13 +264,12 @@ def:pub app -> JsxElement {
             ]}</div>
             <button type="button" className="new-trip" onClick={lambda { openTrip(); }} disabled={busy or loading}>＋ Plan a new trip</button>
             <button type="button" className="text-button demo-trip" onClick={lambda { createIntegratedDemo("map"); }} disabled={busy or loading}>Explore a sample trip map ↗</button>
-            <button type="button" className="text-button demo-trip" onClick={createDemo} disabled={busy or loading}>Start backup & replan demo ↗</button>
-            <button type="button" className="text-button demo-trip" onClick={lambda { createIntegratedDemo("rain"); }} disabled={busy or loading}>Try connected backup plans ↗</button>
+            <button type="button" className="text-button demo-trip" onClick={createDemo} disabled={busy or loading}>Walk through a flight delay ↗</button>
+            <button type="button" className="text-button demo-trip" onClick={lambda { createIntegratedDemo("rain"); }} disabled={busy or loading}>Try backup plans for rain ↗</button>
             <button type="button" className="text-button demo-trip" onClick={lambda { chooseTab("planner"); }} disabled={busy or loading or not selected}>✦ Open AI planner</button>
-            <div className="sidebar-bottom"><p>Organized travel.</p><small>Your plans, all in one place.</small></div>
         </aside>
         <main className="workspace">
-            <header className="topbar"><span>TRAVEL MANAGEMENT WORKSPACE</span><div className="topbar-actions">
+            <header className="topbar"><span/><div className="topbar-actions">
                 <button type="button" className="text-button" onClick={refresh} disabled={busy or loading}>{"Refreshing…" if loading else "↻ Refresh"}</button>
                 <span className="avatar" title="Personal travel workspace">ZL</span></div></header>
             {(<div className="alert error" role="alert">{error}<button type="button" aria-label="Dismiss error" onClick={lambda { error = ""; }}>×</button></div>) if error else None}
@@ -290,14 +289,14 @@ def:pub app -> JsxElement {
                         <div><label htmlFor="currency">Currency</label><select id="currency" value={currency} onChange={lambda (e: ChangeEvent) { currency = e.target.value; }}>{[<option key={unit} value={unit}>{unit}</option> for unit in ["USD", "EUR", "GBP", "CAD", "JPY", "CNY", "AUD", "CHF", "KRW", "INR"]]}</select></div>
                         <div><label htmlFor="budget">Trip budget</label><input id="budget" type="number" min="0" max="100000000" step="0.01" value={budget} placeholder="0.00" onChange={lambda (e: ChangeEvent) { budget = e.target.value; }}/></div>
                     </div>
-                    <label htmlFor="trip-notes">{"Trip notes" if editing_trip else "Short trip brief"}</label>
-                    <textarea id="trip-notes" value={trip_notes} maxLength={5000} placeholder="What would make this a good trip?" onChange={lambda (e: ChangeEvent) { trip_notes = e.target.value; }}/>
+                    <label htmlFor="trip-notes">Notes (optional)</label>
+                    <textarea id="trip-notes" value={trip_notes} maxLength={5000} placeholder="Goals, interests or must-dos" onChange={lambda (e: ChangeEvent) { trip_notes = e.target.value; }}/>
                     </div>
                     {(<div className="trip-brief-preview">
                         <h3 id="trip-brief-summary" tabIndex={-1}>{trip_title}</h3>
                         <p>{destination + " · " + prettyDate(start_date) + " – " + prettyDate(end_date)}</p>
-                        <p>{"Budget " + currency + " " + budget if budget else "Budget to be decided"}</p>
-                        <p className="section-caption">Set your travel party and requirements in Backup plans after creating the trip.</p>
+                        <p>{"Budget " + currency + " " + budget if budget else "No budget set"}</p>
+                        <p className="section-caption">After you create the trip, add travelers and their requirements in Backup plans.</p>
                         {(<p className="brief-note">{trip_notes}</p>) if trip_notes else None}
                         <button type="button" className="text-button" disabled={busy} onClick={lambda {
                             trip_review = False; window.requestAnimationFrame(lambda { focusItineraryControl("trip-name"); });
@@ -306,10 +305,10 @@ def:pub app -> JsxElement {
                     <button className="primary" type="submit" disabled={busy}>{"Saving…" if busy else "Save changes" if editing_trip else "Confirm and create trip" if trip_review else "Review trip brief ↗"}</button>
                 </form>
             </section>) if trip_form else None}
-            {(<section className="welcome card"><div className="welcome-art" aria-hidden="true">↗</div><p className="eyebrow">YOUR TRAVEL WORKSPACE</p>
-                <h1>{"Loading your trips…" if loading else "Plan your travel with confidence."}</h1>
-                <p>Keep your itinerary, reservations, packing list, and budget together. Add your first trip to get started.</p>
-                <button type="button" className="primary" onClick={lambda { openTrip(); }} disabled={busy or loading}>Plan my first trip ↗</button>
+            {(<section className="welcome card"><div className="welcome-art" aria-hidden="true">↗</div>
+                <h1>{"Loading your trips…" if loading else "Create your first trip"}</h1>
+                <p>Plan your itinerary, bookings, packing list and budget in one place. When weather or a delay disrupts the trip, get backup plans to compare.</p>
+                <button type="button" className="primary" onClick={lambda { openTrip(); }} disabled={busy or loading}>Create a trip ↗</button>
             </section>) if not current else (
             <div>
                 {(<section className="map-trip-header">
@@ -319,7 +318,7 @@ def:pub app -> JsxElement {
                 </section>) if mapVisible else (<div>
                 <section className="hero" data-itinerary={tab == "itinerary"}>
 
-                    <div className="hero-content"><span className="status-pill">{status(current)}</span><p className="eyebrow">TRIP OVERVIEW</p>
+                    <div className="hero-content"><span className="status-pill">{status(current)}</span>
                         <h1>{current.title}</h1><p className="destination">◎ {current.destination}</p>
                         <p className="trip-route">{"Departing from: " + (current.departure_location or "Not set") + " · Return to: " + (current.return_location or "Not set")}</p>
                         <p className="trip-dates">{prettyDate(current.start_date) + " — " + prettyDate(current.end_date)}</p>
@@ -334,10 +333,10 @@ def:pub app -> JsxElement {
                 </section>
                 <nav className="trip-workflow ai-workflow" aria-label="Planning workflow">
                     <button type="button" data-active={tab == "planner"} disabled={busy or loading} onClick={lambda { chooseTab("planner"); }}>
-                        <span className="workflow-number">✦</span><span><strong>Plan, prepare & adapt</strong><small>One assistant for every change</small></span>
+                        <span className="workflow-number">✦</span><span><strong>Plan with AI</strong><small>Draft an itinerary, backups or fixes</small></span>
                     </button>
                     <button type="button" data-active={tab == "itinerary"} disabled={busy or loading} onClick={lambda { chooseTab("itinerary"); }}>
-                        <span className="workflow-number">◎</span><span><strong>Your saved itinerary</strong><small>Review and manage your arrangements</small></span>
+                        <span className="workflow-number">◎</span><span><strong>Your itinerary</strong><small>View and edit saved plans</small></span>
                     </button>
                 </nav></div>)}
                 <datalist id="journey-zones">{[<option key={zone} value={zone}/> for zone in ["America/Detroit", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Tokyo", "Asia/Shanghai", "Asia/Seoul", "Asia/Singapore", "Australia/Sydney", "Pacific/Honolulu"]]}</datalist>
@@ -360,17 +359,17 @@ def:pub app -> JsxElement {
                     </button>) if not reviewRequest and tab != "journey" else None}
                 </div>
                 {(<section className="backup-workspace" aria-label="Backup plans">
-                    <div className="card workflow-intro"><p className="eyebrow">PREPARE ALTERNATIVES</p><h2>Backup plans</h2>
-                        <p>Prepare alternatives for detected risks or a change you report. Compare the complete plans and explicitly accept a revision.</p>
-                        <div className="planning-demo-actions"><button type="button" className="secondary" disabled={busy} onClick={lambda { createIntegratedDemo("rain"); }}>Try weather sample</button>
-                            <button type="button" className="secondary" disabled={busy} onClick={lambda { createIntegratedDemo("arrival_delay"); }}>Try arrival-delay sample</button></div>
+                    <div className="card workflow-intro"><h2>Backup plans</h2>
+                        <p>Get alternatives for a risk such as rain or a late arrival. Compare their cost and timing, then accept one to update your itinerary.</p>
+                        <div className="planning-demo-actions"><button type="button" className="secondary" disabled={busy} onClick={lambda { createIntegratedDemo("rain"); }}>Load rain sample</button>
+                            <button type="button" className="secondary" disabled={busy} onClick={lambda { createIntegratedDemo("arrival_delay"); }}>Load late-arrival sample</button></div>
                         <button type="button" className="text-button" onClick={lambda { chooseTab("replan"); }}>Replan after a disruption →</button>
                     </div>
                     <BackupPanel key={selected} trip={current} items={items} onApplied={backupApplied}/>
                 </section>) if not loading and tab == "backups" else None}
                 {(<AIPlanner data={aiData} currency={current.currency} onCompose={composeAI} onReview={reviewAI} onPrices={priceAI} onPreferences={savePreferences} busy={busy}/>) if tab == "planner" else None}
-                {(<section className="budget-overview card"><div><p className="eyebrow">EVERY LITTLE THING ADDS UP</p><h2>Your trip, in numbers.</h2>
-                    <p>Costs are counted once, in {current.currency}. Mark each cost paid as you go.</p></div><div className="budget-numbers">
+                {(<section className="budget-overview card"><div><h2>Budget summary</h2>
+                    <p>All amounts are in {current.currency}. Mark items paid as you pay them.</p></div><div className="budget-numbers">
                     <p><span>Budget</span><strong>{money(current.budget_cents, current.currency) if current.budget_cents else "Not set"}</strong></p>
                     <p><span>Planned</span><strong>{money(total, current.currency)}</strong></p><p><span>Paid</span><strong>{money(paid, current.currency)}</strong></p>
                     <p><span>Still to pay</span><strong>{money(total - paid, current.currency)}</strong></p>
@@ -389,17 +388,17 @@ def:pub app -> JsxElement {
                     </div>) if mapVisible else None}
                     <div className="itinerary-main">
                         <section className="card plan-card">
-                            <div className="section-heading"><div><p className="eyebrow">{"SMALL THINGS, BIG DIFFERENCE" if tab == "packing" else "KEEP THE DETAILS HANDY" if tab == "bookings" else "MAKE IT ALL ADD UP" if tab == "budget" else "LEAVE A LITTLE ROOM TO WANDER"}</p>
-                                <h2 id="itinerary-timeline" tabIndex={-1}>{"Your packing list" if tab == "packing" else "Reservations & transport" if tab == "bookings" else "Trip costs" if tab == "budget" else "The itinerary"}</h2></div><span className="count-pill">{str(len(shown)) + (" item" if len(shown) == 1 else " items")}</span></div>
+                            <div className="section-heading"><div>
+                                <h2 id="itinerary-timeline" tabIndex={-1}>{"Packing list" if tab == "packing" else "Reservations & transport" if tab == "bookings" else "Trip costs" if tab == "budget" else "Itinerary"}</h2></div><span className="count-pill">{str(len(shown)) + (" item" if len(shown) == 1 else " items")}</span></div>
                             {(<ItineraryDays items={itineraryItems} day={day} start_date={current.start_date} end_date={current.end_date}
                                 onChange={lambda (value: str) { day = value; }}/>) if tab == "itinerary" else None}
                             {(<div className="day-filter"><label htmlFor="day-filter">Show date</label><input id="day-filter" type="date" min={current.start_date} max={current.end_date} value={day} onChange={lambda (e: ChangeEvent) { day = e.target.value; }}/><button type="button" className="text-button" onClick={lambda { day = ""; }}>All dates</button></div>) if tab == "bookings" else None}
-                            <p className="section-caption">{"Transport and stays also appear in your itinerary." if tab == "bookings" else "Check off the essentials before you head out." if tab == "packing" else "Update an existing item's cost instead of adding it twice." if tab == "budget" else "Explore a place or use Actions to review a change."}</p>
+                            <p className="section-caption">{"Transport and stays also appear in your itinerary." if tab == "bookings" else "Check off each essential as you pack." if tab == "packing" else "To change a cost, edit its item. Adding the item again counts the cost twice." if tab == "budget" else "Use Actions on an item to report a delay or find alternatives."}</p>
                             {(<p className="itinerary-preview-banner" role="status">{"Preview · Your saved itinerary is unchanged" if itineraryPreview["choice"] else "Impact preview · Stops to check are highlighted"}</p>) if itineraryPreview and len(itineraryPreview["affected"]) > 0 else None}
-                            {(<div className="empty-state"><span>{"…" if loading else icon(category)}</span><h3>{"Loading your plan…" if loading else "A little space for something good."}</h3><p>{"Your details will appear shortly." if loading else "Add an item using the form, or choose another date."}</p></div>) if loading or not shown else (
+                            {(<div className="empty-state"><span>{"…" if loading else icon(category)}</span><h3>{"Loading your plan…" if loading else "Nothing here yet"}</h3><p>{"Your details will appear shortly." if loading else "Add an item with the form, or choose another date."}</p></div>) if loading or not shown else (
                             <div className="item-list">{[
                                 <div className="itinerary-row" key={item.id}>
-                                {(<h3 className="itinerary-day">{prettyDate(previewDate(item)) if previewDate(item) else "Flexible dates"}</h3>) if tab == "itinerary" and (index == 0 or previewDate(shown[index - 1]) != previewDate(item)) else None}
+                                {(<h3 className="itinerary-day">{prettyDate(previewDate(item)) if previewDate(item) else "No date set"}</h3>) if tab == "itinerary" and (index == 0 or previewDate(shown[index - 1]) != previewDate(item)) else None}
                                 <article className="travel-item" id={"itinerary-stop-" + item.id} tabIndex={-1} data-done={item.done}
                                     data-place-selected={bool(placesOpen and not reviewRequest and currentPlace and currentPlace.id == item.id)}
                                     data-affected={bool(itineraryPreview and item.id in itineraryPreview["affected"])}
@@ -437,7 +436,7 @@ def:pub app -> JsxElement {
                                 </article></div> for (index, item) in enumerate(shown)
                             ]}</div>)}
                         </section>
-                        <section className="card notes-card"><p className="eyebrow">A NOTE TO YOUR FUTURE SELF</p><h2>Trip notes</h2><p>{current.notes or "Keep useful addresses, ideas, and reminders here. Add notes in Edit trip."}</p></section>
+                        <section className="card notes-card"><h2>Trip notes</h2><p>{current.notes or "No notes yet. Add addresses, ideas or reminders in Edit trip."}</p></section>
                         <button type="button" className="text-button delete delete-trip" onClick={removeTrip} disabled={busy or loading}>Delete this trip</button>
                     </div>
                     {(<ItineraryReview key={current.id + ":" + str(reviewKey.current)} trip_id={current.id} currency={current.currency}
@@ -454,8 +453,8 @@ def:pub app -> JsxElement {
                     {(<ItineraryPlaces places={places} place={currentPlace} destination={current.destination} day={day}
                         disabled={busy or loading} onSelect={lambda (id: str) { placeId = id; }} onReview={openReview}/>) if placesOpen else None}
                     <aside className="card item-editor" hidden={placesOpen}>
-                        <span className="form-symbol">＋</span><p className="eyebrow">PUT IT ON THE PLAN</p><h2>{"Edit item" if editing_item else "One more good idea."}</h2>
-                        <p className="section-caption">{"Keep the details up to date." if editing_item else "Big adventures are made of little plans."}</p>
+                        <span className="form-symbol">＋</span><h2>{"Edit item" if editing_item else "Add an item"}</h2>
+                        {(<p className="section-caption">Add an activity, booking, meal, packing item or cost.</p>) if not editing_item else None}
                         <form onSubmit={submitItem}>
                             <label htmlFor="category">Category</label><select id="category" value={category} onChange={lambda (e: ChangeEvent) { category = e.target.value; }}>{[<option key={kind} value={kind}>{"Activity / sightseeing" if kind == "activity" else "Flight / transport" if kind == "transport" else "Hotel / stay" if kind == "stay" else "Food / dining" if kind == "food" else "Packing essential" if kind == "packing" else "Other cost"}</option> for kind in ["activity", "transport", "stay", "food", "packing", "expense"]]}</select>
                             <label htmlFor="item-title">Title</label><input id="item-title" value={item_title} maxLength={160} placeholder={"Passport" if category == "packing" else "e.g. Check in at the hotel"} required={True} onChange={lambda (e: ChangeEvent) { item_title = e.target.value; }}/>
@@ -465,9 +464,9 @@ def:pub app -> JsxElement {
                                 {(<fieldset className="journey-item-fields"><legend>City / intercity transport</legend>
                                     <label htmlFor="item-city-stop">City stop</label><select id="item-city-stop" value={item_stop} onChange={lambda (e: ChangeEvent) { item_stop = e.target.value; item_leg = ""; }}><option value="">Choose a city, or a transport leg below</option>{[<option key={stop["id"]} value={stop["id"]}>{stop["city"] + " · " + stop["zone"]}</option> for stop in journeyData["journey"]["stops"]]}</select>
                                     {(<div><label htmlFor="item-journey-leg">Intercity leg</label><select id="item-journey-leg" value={item_leg} onChange={lambda (e: ChangeEvent) { item_leg = e.target.value; item_stop = ""; }}><option value="">Local transport in selected city</option>{[<option key={leg["id"]} value={leg["id"]}>{legLabel(journeyData["journey"], leg) + " · " + leg["mode"]}</option> for leg in journeyData["journey"]["legs"]]}</select></div>) if category == "transport" else None}
-                                    <label htmlFor="item-duration">Elapsed duration (minutes)</label><input id="item-duration" type="number" min="1" max="1440" value={item_duration} required={True} onChange={lambda (e: ChangeEvent) { item_duration = e.target.value; }}/>
+                                    <label htmlFor="item-duration">Duration (minutes)</label><input id="item-duration" type="number" min="1" max="1440" value={item_duration} required={True} onChange={lambda (e: ChangeEvent) { item_duration = e.target.value; }}/>
                                     {(<div className="form-pair"><label>Arrival date<input aria-label="Transport arrival date" type="date" value={arrival_date} required={True} onChange={lambda (e: ChangeEvent) { arrival_date = e.target.value; }}/></label><label>Arrival time<input aria-label="Transport arrival time" type="time" value={arrival_time} required={True} onChange={lambda (e: ChangeEvent) { arrival_time = e.target.value; }}/></label></div>) if item_leg else None}
-                                    <p className="form-help">Departure uses the origin city's local time; arrival uses the destination city's local time.</p>
+                                    <p className="form-help">Enter departure in the origin city's local time and arrival in the destination city's local time.</p>
                                 </fieldset>) if journeyData.get("journey") else None}
                                 <label htmlFor="location">Location / address</label><input id="location" value={location} maxLength={300} placeholder="Where to go" onChange={lambda (e: ChangeEvent) { location = e.target.value; }}/>
                                 {(<div><label htmlFor="reference">Booking reference</label><input id="reference" value={reference} maxLength={160} placeholder="Confirmation number" onChange={lambda (e: ChangeEvent) { reference = e.target.value; }}/></div>) if category in ["transport", "stay"] else None}
@@ -477,12 +476,12 @@ def:pub app -> JsxElement {
                             <button type="submit" className="primary" disabled={busy or loading or not item_title.strip()}>{"Saving…" if busy else "Save changes" if editing_item else "Add to trip ↗"}</button>
                             {(<button type="button" className="text-button cancel-edit" onClick={resetItem} disabled={busy}>Cancel editing</button>) if editing_item else None}
                         </form>
-                        <p className="form-help">{"Packing items are checklists without dates or costs." if category == "packing" else "Use local times for the selected city or transport endpoints." if journeyData.get("journey") else "Times are local to the destination. Date and cost are optional."}</p>
+                        <p className="form-help">{"Packing items have no date or cost." if category == "packing" else "Use local times for the selected city or transport endpoints." if journeyData.get("journey") else "Date and cost are optional. Times are local to the destination."}</p>
                     </aside>
                     </div>
                 </div>
             </div>)}
-            <footer>Jacplan <span>A place for your plans. A little room for the unexpected.</span></footer>
+            <footer>Jacplan</footer>
         </main>
         {(<div className="revision-toast" role="status">{revisionNotice}
             <button type="button" className="itinerary-chip" aria-label="Dismiss saved revision message" onClick={lambda { revisionNotice = ""; }}>×</button>

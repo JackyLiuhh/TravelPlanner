@@ -80,7 +80,7 @@ impl app.submitTrip(e: FormEvent) -> None {
             departure_location=departure_location, return_location=return_location);
         if selected != saved.id { aiData = {}; aiCompose = 0; tab = "planner"; }
         resetReview(); selected = saved.id; trip_form = False; day = ""; resetItem();
-        await refresh(); notice = "Trip saved. Let the planning begin.";
+        await refresh(); notice = "Trip saved.";
     } except Exception as exc { error = str(exc); }
     finally { busy = False; }
 }
@@ -145,7 +145,7 @@ impl app.createDemo -> None {
     try {
         demo = await replan_demo(); resetReview(); selected = demo["trip_id"]; day = "";
         trip_form = False; tab = "demo"; resetItem(); await refresh();
-        notice = "Demo ready. Generate backup plans, simulate a flight delay, then accept a revised itinerary.";
+        notice = "Demo trip created. Follow the three steps below.";
     } except Exception as exc { error = str(exc); }
     finally { busy = False; }
 }
@@ -156,12 +156,12 @@ impl app.createIntegratedDemo(scenario: str = "rain") -> None {
         demo = await create_planning_demo(scenario=scenario); resetReview(); selected = demo["trip_id"]; day = "";
         if scenario == "map" { itineraryView = "map"; }
         trip_form = False; tab = "itinerary" if scenario == "map" else "backups"; resetItem(); await refresh();
-        if scenario != "map" { notice = "Sample ready. Find different plans, compare the changes, then keep or accept one."; }
+        if scenario != "map" { notice = "Sample trip created. Select Find alternative plans to compare options."; }
     } except Exception as exc { error = str(exc); }
     finally { busy = False; }
 }
 
 impl app.backupApplied -> None {
     await refresh();
-    notice = "Your selected backup plan is saved. No real bookings or payments were made.";
+    notice = "Backup plan saved to your itinerary. Nothing was booked or paid.";
 }

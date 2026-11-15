@@ -17,15 +17,15 @@ From `travel-planner/`:
 ../.tools/jac-0.37.23 run --dev travel
 ```
 
-Click **Start backup & replan demo** in the sidebar. This creates a separate Boston trip and opens **Guided demo**. Generate dinner backups in step 1, then continue to step 2. In **Replan**, delay **Flight arrival** by **180 minutes**, then click **Generate replan options**. Rental-car pickup and dinner miss their windows, hotel check-in moves, and the fixed next-day museum remains unchanged. Compare alternatives or use **Build your own combination** to mix individual backups. Rejecting leaves the itinerary unchanged; accepting applies the stored proposal.
+Click **Walk through a flight delay** in the sidebar. This creates a separate Boston trip and opens **Guided demo**. Generate dinner backups in step 1, then continue to step 2. In **Replan**, delay **Flight arrival** by **180 minutes**, then click **Generate replan options**. Rental-car pickup and dinner miss their windows, hotel check-in moves, and the fixed next-day museum remains unchanged. Compare alternatives or use **Build your own combination** to mix individual backups. Rejecting leaves the itinerary unchanged; accepting applies the stored proposal.
 
-For your own trip, enter dates and times, expand **Schedule rules and dependencies** and set durations/latest-start windows in **Schedule rules**, and connect dependent items. The transfer buffer is added after the prerequisite's duration. A blank latest-start window treats an arrangement as flexible. Existing itineraries have no implicit dependencies; the engine does not guess them from titles or chronological order. `done` means confirmed for transport/stays in Roam; completed food/activity items and explicitly fixed items are protected.
+For your own trip, enter dates and times, expand **Schedule rules and linked items** and set durations/latest-start windows in **Schedule rules**, and connect dependent items. The transfer buffer is added after the prerequisite's duration. A blank latest-start window treats an arrangement as flexible. Existing itineraries have no implicit dependencies; the engine does not guess them from titles or chronological order. `done` means confirmed for transport/stays in Roam; completed food/activity items and explicitly fixed items are protected.
 
 ## Optional Jac LLM selection
 
 The implementation follows Jac's [byLLM documentation](https://docs.jaseci.org/reference/plugins/byllm/). `agent.jac` declares a typed `ReplanSelection` and delegates selection with `by replan_model(...)`. Its `sem` annotations describe allowed selections and explanations. The model receives up to twelve prevalidated combinations of mock backup IDs, dates/times, and deterministic cost metrics. Booking references, traveler notes, and payment credentials are excluded.
 
-`jac install` resolves the LLM capability declared by `[byllm.model]` in `jac.toml`. The default is `gpt-6.1-sol`; to enable it, set a provider key in the **server** environment before launching and check **Use LLM to choose backup combinations**:
+`jac install` resolves the LLM capability declared by `[byllm.model]` in `jac.toml`. The default is `gpt-6.1-sol`; to enable it, set a provider key in the **server** environment before launching and check **Let AI choose which backups to combine**:
 
 ```sh
 export OPENAI_API_KEY="your-key"

@@ -274,15 +274,15 @@ def:pub ValidationLab(trip_id: str = "", initial_target: str = "", initial_trigg
             {(<button type="button" className="secondary" onClick={lambda { clear(); retryId.current = ""; initialize(); }}>Reload options</button>) if not booting and (history is None or (trip_id and failure)) else None}
             {(<p role="status">{notice}</p>) if notice else None}
             {(<div className="validation-controls">
-                <div><label htmlFor={prefix + "-trigger"}>Activation scenario</label>
+                <div><label htmlFor={prefix + "-trigger"}>Disruption</label>
                     <select id={prefix + "-trigger"} value={scenario} disabled={pending or booting} onChange={lambda (e: ChangeEvent) { scenario = e.target.value; target = ""; inputChanged(); }}>
                         <option value="rain">Rain affects an outdoor activity</option><option value="arrival_delay">Delayed arrival affects dinner</option>
                     </select></div>
-                <div><label htmlFor={prefix + "-target"}>Original itinerary item</label>
+                <div><label htmlFor={prefix + "-target"}>Item to replace</label>
                     <select id={prefix + "-target"} value={target} disabled={pending or booting} onChange={lambda (e: ChangeEvent) { target = e.target.value; inputChanged(); }}>
                         <option value="">Choose an item</option>{[<option key={item["id"]} value={item["id"]}>{item["title"] + " · " + item["date"]}</option> for item in eligible]}
                     </select></div>
-                {(<p>Add a dated, unfinished activity or dining item to this trip to search for backups.</p>) if len(eligible) == 0 else None}
+                {(<p>To search for backups, add a dated activity or dinner that isn't marked done.</p>) if len(eligible) == 0 else None}
             </div>) if trip_id else (<div className="validation-controls">
                 <div><label htmlFor={prefix + "-scenario"}>Sample scenario</label>
                     <select id={prefix + "-scenario"} value={scenario} disabled={pending or booting} onChange={lambda (e: ChangeEvent) { scenario = e.target.value; inputChanged(); }}>
@@ -351,7 +351,7 @@ def:pub ValidationLab(trip_id: str = "", initial_target: str = "", initial_trigg
                         <div><dt>Reserve included</dt><dd>{money(option["cost"]["reserve_minor"])}</dd></div>
                         <div><dt>Budget</dt><dd>{money(option["cost"]["budget_minor"])}</dd></div>
                     </dl>
-                    <p className="muted">No refund assumed. Totals require whole-party quotes including taxes and fees.</p>
+                    <p className="muted">No refund assumed. Totals need group prices that include taxes and fees.</p>
                     {(<BackupChanges changes={option["changes"]} diagnostics={diagnostics}/>) if option.get("changes") else None}
                     {(<ul className="validation-reasons">{[<li key={str(index)}><strong>{"Failed" if check["status"] == "fail" else "Unknown"}: </strong>{check["message"]}
                         <small>{(" · " + check["item_ids"].join(" → ")) if len(check["item_ids"]) > 0 else ""}</small></li> for (index, check) in enumerate(option["checks"]) if check["status"] != "pass"]}</ul>

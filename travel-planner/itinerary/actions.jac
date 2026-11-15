@@ -71,7 +71,7 @@ def:pub ItemActions(trip_id: str, item_id: str, title: str, category: str, disab
                 <p role="status">{("Checking saved connections…" if loading else
                     str(len(affected)) + (" arrangement to check" if len(affected) == 1 else " arrangements to check"))
                     if not failure else failure}</p>
-                <small>Includes this stop and its saved downstream dependencies.</small>
+                <small>Includes this stop and any items linked after it.</small>
                 <button type="button" className="quick-delay-review" disabled={loading}
                     onClick={lambda { review("timing", minutes); }}>Review impact and options →</button>
                 <button type="button" className="text-button" onClick={lambda {

@@ -38,10 +38,10 @@ const previewRoute = '**/function/save_trip_backup_refresh';
   const selectTrip = async trip => {
     await page.getByRole('button', {name: new RegExp(trip.title)}).click();
     await page.getByRole('button', {name: 'Backup plans', exact: true}).click();
-    await page.getByLabel('Original itinerary item').waitFor();
+    await page.getByLabel('Item to replace', {exact: true}).waitFor();
   };
   const generate = async itemId => {
-    await page.getByLabel('Original itinerary item').selectOption(itemId);
+    await page.getByLabel('Item to replace', {exact: true}).selectOption(itemId);
     await page.locator('.backup-panel .primary').click();
     await page.locator('.backup-option').first().waitFor();
     assert.equal(await page.locator('.backup-option').count(), 2);
@@ -70,20 +70,20 @@ const previewRoute = '**/function/save_trip_backup_refresh';
     await page.setViewportSize({width: 1440, height: 1100});
     passed('backup panel fits a mobile viewport');
 
-    await page.getByLabel('Activation scenario').selectOption('arrival_delay');
+    await page.getByLabel('Disruption', {exact: true}).selectOption('arrival_delay');
     assert.equal(await page.locator('.backup-option').count(), 0);
-    assert.equal(await page.getByLabel('Original itinerary item').inputValue(), '');
+    assert.equal(await page.getByLabel('Item to replace', {exact: true}).inputValue(), '');
     await generate(dinner.id);
     await page.getByRole('heading', {name: 'Late vegetarian dinner'}).waitFor();
     passed('scenario switch clears old state and delayed dinner renders its own drafts');
 
     await page.getByRole('button', {name: '↻ Refresh', exact: true}).click();
-    await page.getByLabel('Original itinerary item').waitFor();
+    await page.getByLabel('Item to replace', {exact: true}).waitFor();
     assert.equal(await page.locator('.backup-option').count(), 0);
     passed('workspace refresh clears current results while keeping recorded history');
-    await page.getByLabel('Activation scenario').selectOption('rain');
+    await page.getByLabel('Disruption', {exact: true}).selectOption('rain');
 
-    await page.getByLabel('Original itinerary item').selectOption(activity.id);
+    await page.getByLabel('Item to replace', {exact: true}).selectOption(activity.id);
     await page.route(previewRoute, route => route.abort('failed'), {times: 1});
     await page.locator('.backup-panel .primary').click();
     await page.locator('.backup-panel [role="alert"]').waitFor();
@@ -108,19 +108,19 @@ const previewRoute = '**/function/save_trip_backup_refresh';
     release();
     await completed;
     assert.equal(await page.locator('.backup-option').count(), 0);
-    assert.equal(await page.getByLabel('Original itinerary item').inputValue(), '');
+    assert.equal(await page.getByLabel('Item to replace', {exact: true}).inputValue(), '');
     await page.unroute(previewRoute);
     passed('a late response from another trip cannot restore old previews');
 
     await selectTrip(unsupported);
-    await page.getByLabel('Original itinerary item').selectOption(unsupportedItem.id);
+    await page.getByLabel('Item to replace', {exact: true}).selectOption(unsupportedItem.id);
     await page.locator('.backup-panel .primary').click();
     await page.getByRole('status').filter({hasText: 'No alternatives are available'}).waitFor();
     assert.equal(await page.locator('.backup-option').count(), 0);
     passed('unsupported destinations show an explicit empty state');
 
     await selectTrip(first);
-    await page.getByLabel('Activation scenario').selectOption('rain');
+    await page.getByLabel('Disruption', {exact: true}).selectOption('rain');
     await generate(activity.id);
     await page.clock.fastForward(16 * 60 * 1000);
     await page.locator('.backup-option').first().waitFor({state: 'detached'});
