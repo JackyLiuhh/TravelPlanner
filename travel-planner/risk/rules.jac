@@ -45,10 +45,10 @@ def check_connections(bundle: TripBundle, config: RiskConfig, now: datetime) -> 
         src_end = local_to_instant(src.end_local, src.end_zone());
         dst_start = local_to_instant(dst.start_local, dst.tz);
         if src_end is None or dst_start is None {
-            missing = f"end time of {src.title}" if src_end is None else f"start time of {dst.title}";
+            summary = (f"No end time for {src.title}, so the gap before {dst.title} can't be checked."
+                if src_end is None else f"No start time for {dst.title}, so the gap after {src.title} can't be checked.");
             flags.append(_flag(rule, RiskCategory.TIMING, Severity.LOW, FlagStatus.UNRESOLVED, ids,
-                f"Cannot check the connection from {src.title} to {dst.title}: the {missing} is unknown.",
-                "Add the missing time so the connection can be checked.", now));
+                summary, "Add the missing time.", now));
             continue;
         }
         needs: list[int] = [];
@@ -56,19 +56,19 @@ def check_connections(bundle: TripBundle, config: RiskConfig, now: datetime) -> 
         evidence = src.evidence_ids + dst.evidence_ids;
         if edge.min_transition_minutes is not None {
             needs.append(edge.min_transition_minutes);
-            basis.append("stated minimum");
+            basis.append("your minimum");
         }
         for est in bundle.travel_estimates {
             if est.from_node_id == src.id and est.to_node_id == dst.id {
                 needs.append(est.minutes);
-                basis.append(f"{est.mode} estimate");
+                basis.append(f"{est.mode} time estimate");
                 evidence.append(est.evidence_id);
             }
         }
         if not needs {
             fallback = config.flight_arrival_buffer_minutes if src.kind == NodeKind.FLIGHT else config.min_transfer_minutes;
             needs.append(fallback);
-            basis.append("default buffer");
+            basis.append("standard buffer");
         }
         required = max(needs);
         gap = minutes_between(src_end, dst_start);
@@ -78,10 +78,10 @@ def check_connections(bundle: TripBundle, config: RiskConfig, now: datetime) -> 
             summary = f"{dst.title} starts {_duration(-gap)} before {src.title} ends.";
         } else {
             severity = Severity.HIGH if gap * 2 < required else Severity.MEDIUM;
-            summary = (f"Only {_duration(gap)} between {src.title} and {dst.title}; "
-                + f"about {_duration(required)} is needed ({', '.join(basis)}).");
+            summary = (f"Only {_duration(gap)} between {src.title} and {dst.title}, "
+                + f"but about {_duration(required)} is needed ({', '.join(basis)}).");
         }
-        if src.kind == NodeKind.FLIGHT { summary += " Any arrival delay makes this worse."; }
+        if src.kind == NodeKind.FLIGHT { summary += " A late arrival would make it tighter."; }
         flags.append(_flag(rule, RiskCategory.TIMING, severity, FlagStatus.FLAGGED, ids, summary,
             f"Move {dst.title} later or prepare a backup for it in case {src.title} runs late.", now, evidence));
     }
@@ -108,8 +108,8 @@ def check_weather(bundle: TripBundle, config: RiskConfig, now: datetime) -> list
         end = local_to_instant(n.end_local, n.tz) or start;
         if start is None or end is None {
             flags.append(_flag(rule, RiskCategory.WEATHER, Severity.LOW, FlagStatus.UNRESOLVED, [n.id],
-                f"{n.title} is outdoors but has no scheduled time, so weather cannot be checked.",
-                "Schedule it, then recheck the forecast.", now));
+                f"No time set for {n.title}, an outdoor activity, so its weather can't be checked.",
+                "Give it a time, then check the forecast.", now));
             continue;
         }
         matching = [f for f in bundle.forecasts if f.area == n.area
@@ -117,10 +117,11 @@ def check_weather(bundle: TripBundle, config: RiskConfig, now: datetime) -> list
             and local_to_instant(f.end_local, f.tz) > start];
         known = [f for f in matching if f.precip_probability_pct is not None];
         if not known {
-            reason = "no forecast covers its time" if not matching else "the forecast gives no precipitation probability";
+            summary = (f"Outdoor activity {n.title} has no forecast for its time yet." if not matching
+                else f"The forecast for outdoor activity {n.title} gives no chance of rain or snow.");
             flags.append(_flag(rule, RiskCategory.WEATHER, Severity.LOW, FlagStatus.UNRESOLVED, [n.id],
-                f"{n.title} is outdoors and {reason}.",
-                "Recheck the forecast closer to the date and keep an indoor alternative in mind.",
+                summary,
+                "Check the forecast closer to the date and keep an indoor option in mind.",
                 now, [f.evidence_id for f in matching]));
             continue;
         }
@@ -133,7 +134,7 @@ def check_weather(bundle: TripBundle, config: RiskConfig, now: datetime) -> list
         if chance < config.rain_probability_pct { continue; }
         severity = Severity.HIGH if chance >= config.high_rain_probability_pct else Severity.MEDIUM;
         flags.append(_flag(rule, RiskCategory.WEATHER, severity, FlagStatus.FLAGGED, [n.id],
-            f"{n.title} is outdoors and the forecast shows {chance}% chance of precipitation ({worst.condition}).",
+            f"{chance}% chance of rain or snow during {n.title}, an outdoor activity ({worst.condition}).",
             "Prepare an indoor backup or move it to a drier time.", now,
             [f.evidence_id for f in known], chance));
     }
@@ -150,14 +151,14 @@ def check_long_drives(bundle: TripBundle, config: RiskConfig, now: datetime) -> 
         end = local_to_instant(n.end_local, n.end_zone());
         if start is None or end is None {
             flags.append(_flag(rule, RiskCategory.LONG_DRIVE, Severity.LOW, FlagStatus.UNRESOLVED, [n.id],
-                f"The length of {n.title} is unknown.", "Add start and end times or a travel estimate.", now));
+                f"Drive time for {n.title} is unknown.", "Add start and end times or a travel time estimate.", now));
             continue;
         }
         minutes = minutes_between(start, end);
         if minutes <= config.long_drive_minutes { continue; }
         severity = Severity.HIGH if minutes * 2 > config.long_drive_minutes * 3 else Severity.MEDIUM;
         flags.append(_flag(rule, RiskCategory.LONG_DRIVE, severity, FlagStatus.FLAGGED, [n.id],
-            f"{n.title} takes {_duration(minutes)}, over the {_duration(config.long_drive_minutes)} limit.",
+            f"{n.title} takes {_duration(minutes)}, longer than the {_duration(config.long_drive_minutes)} limit.",
             "Plan rest stops, split the drive, or consider another way to travel.", now, n.evidence_ids));
     }
     return flags;
@@ -173,7 +174,7 @@ def check_opening_hours(bundle: TripBundle, config: RiskConfig, now: datetime) -
         hours = [h for h in bundle.place_hours if h.node_id == n.id and h.date == date];
         if not hours {
             flags.append(_flag(rule, RiskCategory.OPENING_HOURS, Severity.LOW, FlagStatus.UNRESOLVED, [n.id],
-                f"No opening-hours evidence for {n.title} on {date}.",
+                f"Opening hours for {n.title} on {date} aren't confirmed.",
                 "Confirm the hours for that date.", now));
             continue;
         }
@@ -185,7 +186,7 @@ def check_opening_hours(bundle: TripBundle, config: RiskConfig, now: datetime) -
         }
         if re.fullmatch(CLOCK_PATTERN, h.open_local) is None or re.fullmatch(CLOCK_PATTERN, h.close_local) is None {
             flags.append(_flag(rule, RiskCategory.OPENING_HOURS, Severity.LOW, FlagStatus.UNRESOLVED, [n.id],
-                f"Opening hours for {n.title} on {date} are incomplete (missing opening or closing time).",
+                f"Opening hours for {n.title} on {date} are incomplete: the opening or closing time is missing.",
                 "Confirm the hours for that date.", now, [h.evidence_id]));
             continue;
         }
@@ -221,8 +222,8 @@ def check_booking_terms(bundle: TripBundle, config: RiskConfig, now: datetime) -
         if policy is None {
             if n.paid_minor or n.price_minor {
                 flags.append(_flag(rule, RiskCategory.BOOKING_TERMS, Severity.MEDIUM, FlagStatus.UNRESOLVED, [n.id],
-                    f"No cancellation terms are on file for {n.title}, so its refund exposure is unknown.",
-                    "Attach the booking's terms from the confirmation or provider page.", now));
+                    f"Refund unknown for {n.title}: no cancellation terms are saved.",
+                    "Add the cancellation terms from your booking confirmation.", now));
             }
             continue;
         }
@@ -232,17 +233,17 @@ def check_booking_terms(bundle: TripBundle, config: RiskConfig, now: datetime) -
         if status.state == CancelState.SERVICE_STARTED { continue; }
         if status.state == CancelState.UNKNOWN {
             flags.append(_flag(rule, RiskCategory.BOOKING_TERMS, Severity.MEDIUM, FlagStatus.UNRESOLVED, [n.id],
-                f"Cancellation terms for {n.title} are incomplete (unknown: {', '.join(status.unknowns)}).",
-                "Review the terms with the provider before relying on a refund.", now, status.evidence_ids));
+                f"Cancellation terms for {n.title} are incomplete. Missing: {', '.join(status.unknowns)}.",
+                "Check the terms with the provider before counting on a refund.", now, status.evidence_ids));
         } elif status.state == CancelState.NO_REFUND {
             flags.append(_flag(rule, RiskCategory.BOOKING_TERMS, Severity.MEDIUM, FlagStatus.FLAGGED, [n.id],
-                f"{n.title} is non-refundable if cancelled now; {paid} would be lost.",
+                f"Cancelling {n.title} now refunds nothing. You would lose {paid}.",
                 "Treat it as fixed when replanning, and ask the provider about changes or credit.",
                 now, status.evidence_ids));
         } elif status.state == CancelState.PARTIAL_REFUND {
             refund = format_money(status.refund_if_cancel_now_minor, status.currency);
             flags.append(_flag(rule, RiskCategory.BOOKING_TERMS, Severity.LOW, FlagStatus.FLAGGED, [n.id],
-                f"Cancelling {n.title} now refunds {refund} of {paid} as {status.refund_form.value}{until}.",
+                f"Cancelling {n.title} now refunds {refund} of {paid}, as {status.refund_form.value}{until}.",
                 "Factor the fee into any change to this booking.", now, status.evidence_ids));
         } elif status.minutes_to_next_deadline is not None
             and status.minutes_to_next_deadline <= config.deadline_soon_hours * 60 {

@@ -27,16 +27,16 @@ class MissingFact(ValueError) {}
 """Resolve an IANA local time; never guess DST folds or normalize a gap."""
 def instant(moment: Moment) -> datetime {
     if (not moment.local or not moment.zone) {
-        raise MissingFact("Local time or IANA timezone is missing");
+        raise MissingFact("Time or time zone is missing");
     }
     try {
         local = datetime.fromisoformat(moment.local);
         zone = ZoneInfo(moment.zone);
     } except (ValueError, ZoneInfoNotFoundError, TypeError) as exc {
-        raise ValueError("Invalid local time or IANA timezone") from exc;
+        raise ValueError("Time or time zone is invalid") from exc;
     }
     if (local.tzinfo is not None) {
-        raise ValueError("Use a local time without an offset plus its IANA timezone");
+        raise ValueError("Enter a local time and a time zone name, without a UTC offset");
     }
     if (
         (moment.fold is not None)
@@ -52,30 +52,33 @@ def instant(moment: Moment) -> datetime {
         }
     }
     if not possibilities {
-        raise ValueError("This local time does not exist because of a DST transition");
+        raise ValueError("This time is skipped by a daylight-saving change");
     }
     if ((len(`set(possibilities.values())) > 1) and (moment.fold is None)) {
-        raise MissingFact("Ambiguous DST time: specify its first or second occurrence");
+        raise MissingFact("This time happens twice because of a daylight-saving change; choose which one");
     }
     return possibilities[moment.fold if (moment.fold is not None) else 0];
 }
 def evidence_problem(evidence: (Evidence | None), now: datetime) -> str {
     if ((evidence is None) or not evidence.source.strip()) {
-        return "Source evidence is missing";
+        return "No source is recorded";
     }
     try {
         checked = datetime.fromisoformat(evidence.checked_at);
         expires = datetime.fromisoformat(evidence.expires_at);
         if ((checked.utcoffset() is None) or (expires.utcoffset() is None)) {
-            return "Evidence timestamps need UTC offsets";
+            return "Source dates are missing a UTC offset";
         }
         if ((checked > now) or (expires <= now) or (expires <= checked)) {
-            return "Evidence is expired or has an invalid observation window";
+            return "Source information has expired or has invalid dates";
         }
     } except (ValueError, TypeError) {
-        return "Evidence timestamps are invalid";
+        return "Source dates are invalid";
     }
     return "";
+}
+def _amount(minor: int, currency: str) -> str {
+    return f"{currency} {minor // 100:,}.{minor % 100:02d}";
 }
 def _minor(value: any) -> bool {
     return ((`type(value) is int) and (value >= 0));
@@ -111,7 +114,7 @@ def validate_replacement(
         record(
             code,
             "unknown" if problem else "pass",
-            (problem or "Fresh source evidence"),
+            (problem or "Source information is current"),
             *ids
         );
         return not problem;
@@ -140,8 +143,8 @@ def validate_replacement(
             },
             "ledger": ledger,
             "proposed_items": [asdict(item) for item in nodes],
-            "notice": "Synthetic fixture validation only. No shared-agent integration or booking. "
-            "Paid original costs are retained; no refund is assumed."
+            "notice": "Demo data only. Nothing is booked. "
+            "Amounts already paid are kept; no refund is assumed."
         };
     }
     nodes = `list(trip.items);
@@ -149,7 +152,7 @@ def validate_replacement(
     if (
         not ids or `any(not key.strip() for key in ids) or (len(`set(ids)) != len(ids))
     ) {
-        record("item_ids", "fail", "Itinerary IDs must be nonempty and unique");
+        record("item_ids", "fail", "Every itinerary item needs its own ID");
         return finish();
     }
     if (
@@ -157,7 +160,7 @@ def validate_replacement(
         or (replacement.item.id != replacement.replaces_id)
     ) {
         record(
-            "replacement_scope", "fail", "Replacement must preserve an existing item ID"
+            "replacement_scope", "fail", "The replacement must keep the ID of the item it replaces"
         );
         return finish();
     }
@@ -168,21 +171,21 @@ def validate_replacement(
     );
     if (old.fixed or old.completed) {
         record(
-            "protected_item", "fail", "Cannot replace a fixed or completed item", old.id
+            "protected_item", "fail", f"{old.title} is fixed or completed and can't be replaced", old.id
         );
         return finish();
     }
     record(
         "protected_item",
         "pass",
-        "Fixed and completed itinerary items remain unchanged",
+        "Fixed and completed items stay unchanged",
         old.id
     );
     if ((risk.trip_id != trip.id) or (risk.item_id != old.id)) {
         record(
             "risk_scope",
             "fail",
-            "Risk does not refer to this trip and replacement item",
+            "This risk belongs to a different trip or item",
             old.id
         );
     }
@@ -191,18 +194,18 @@ def validate_replacement(
         record(
             "risk_status",
             "unknown",
-            "The activation risk has not been established",
+            f"The risk to {old.title} isn't confirmed yet",
             old.id
         );
     }
     if (risk.trigger not in ("rain", "arrival_delay", "weather", "timing", "long_drive", "opening_hours",
         "booking_terms", "closure", "cancellation", "traveler_change", "budget_change", "inventory_change")) {
-        record("risk_trigger", "unknown", "Unsupported activation condition", old.id);
+        record("risk_trigger", "unknown", "This type of disruption isn't supported yet", old.id);
     } elif (risk.trigger in ("rain", "arrival_delay") and old.category != ("activity" if risk.trigger == "rain" else "food")) {
         record(
             "risk_trigger",
             "fail",
-            "Activation condition does not match the original item",
+            f"This disruption doesn't apply to {old.title}",
             old.id
         );
     }
@@ -210,18 +213,18 @@ def validate_replacement(
         record(
             "replacement_category",
             "fail",
-            "Replacement category differs from the original",
+            f"The replacement isn't the same kind of item as {old.title}",
             old.id
         );
     }
     if replacement.action not in ("replace", "reschedule") {
-        record("replacement_action", "fail", "Unsupported planning action", old.id);
+        record("replacement_action", "fail", "This type of change isn't supported", old.id);
     }
     if (replacement.action == "replace" and replacement.item.paid_minor != 0) {
         record(
             "replacement_payment",
             "fail",
-            "A proposed new purchase cannot already be paid",
+            "A new purchase can't already be marked paid",
             old.id
         );
     }
@@ -238,17 +241,17 @@ def validate_replacement(
         )
     ) {
         record(
-            "profile", "fail", "Party requires adults and child ages from 0 through 17"
+            "profile", "fail", "Enter at least one adult, and child ages from 0 to 17"
         );
     }
     if missing_adults {
-        record("profile", "unknown", "Traveler party composition is missing");
+        record("profile", "unknown", "The number of travelers is missing");
     }
     if not profile.complete {
-        record("profile", "unknown", "Traveler hard requirements are incomplete");
+        record("profile", "unknown", "Traveler requirements are incomplete");
     }
     if `any(not code.strip() for code in profile.dietary) {
-        record("profile", "unknown", "A dietary requirement has no interpretable code");
+        record("profile", "unknown", "A dietary requirement isn't recognized");
     }
     try {
         (first, last) = (
@@ -256,7 +259,7 @@ def validate_replacement(
             date.fromisoformat(trip.end_date)
         );
         if (last < first) {
-            raise ValueError("Trip end precedes start");
+            raise ValueError("The trip ends before it starts");
         }
         lower = instant(Moment((first.isoformat() + "T00:00"), trip.zone));
         upper = instant(
@@ -272,60 +275,60 @@ def validate_replacement(
     times = {};
     known_costs = trip.currency == "USD";
     if not known_costs {
-        record("currency", "unknown", "Standalone fixtures currently support USD only");
+        record("currency", "unknown", "Prices can only be checked in USD for now");
     }
     for item in nodes {
         if (item.category not in ("transport", "stay", "food", "activity")) {
             record(
-                "category", "unknown", "Unsupported scheduled item category", item.id
+                "category", "unknown", f"{item.title}: this type of item can't be checked", item.id
             );
         }
         if (not item.blocks_time and (item.category != "stay")) {
             record(
                 "blocking_time",
                 "fail",
-                "Only lodging reservations may be nonblocking",
+                f"{item.title}: only hotel stays can overlap other plans",
                 item.id
             );
         }
         fresh = evidence(item.evidence, "item_evidence", item.id);
         if (item.availability == "unavailable") {
-            record("availability", "fail", "Inventory is unavailable", item.id);
+            record("availability", "fail", f"{item.title} is unavailable", item.id);
         } elif (item.availability != "available") {
             record(
-                "availability", "unknown", "Inventory availability is unknown", item.id
+                "availability", "unknown", f"Availability of {item.title} is unknown", item.id
             );
         } else {
             record(
-                "availability", "pass", "Available in the supplied fixture", item.id
+                "availability", "pass", f"{item.title} is available (demo data)", item.id
             );
         }
         if not item.venue.strip() {
-            record("location", "unknown", "Venue is missing", item.id);
+            record("location", "unknown", f"No location for {item.title}", item.id);
         }
         begin = resolve(item.start, "schedule", item.id);
         end = resolve(item.end, "schedule", item.id);
         if ((begin is not None) and (end is not None)) {
             if (begin >= end) {
-                record("schedule", "fail", "Event end must follow start", item.id);
+                record("schedule", "fail", f"{item.title} ends before it starts", item.id);
             } else {
                 times[item.id] = (begin, end);
                 if item.id in trip.latest_starts {
                     latest = resolve(trip.latest_starts[item.id], "latest_start", item.id);
-                    if latest is not None and begin > latest { record("latest_start", "fail", "Traveler's latest-start boundary is exceeded", item.id); }
+                    if latest is not None and begin > latest { record("latest_start", "fail", f"{item.title} starts after your latest allowed start", item.id); }
                 }
                 if ((lower is not None) and ((begin < lower) or (end > upper))) {
                     record(
                         "trip_bounds",
                         "fail",
-                        "Item lies outside the trip window",
+                        f"{item.title} falls outside the trip dates",
                         item.id
                     );
                 } else {
                     record(
                         "schedule",
                         "pass",
-                        "Scheduled interval resolved in UTC",
+                        f"{item.title} has a valid time",
                         item.id
                     );
                 }
@@ -334,7 +337,7 @@ def validate_replacement(
                 record(
                     "opening_hours",
                     "unknown",
-                    "Opening or operating window is missing",
+                    f"Opening hours for {item.title} are unknown",
                     item.id
                 );
             } else {
@@ -348,7 +351,7 @@ def validate_replacement(
                         record(
                             "opening_hours",
                             "fail",
-                            "Operating window must have positive duration",
+                            f"Opening hours for {item.title} are invalid",
                             item.id
                         );
                     } elif ((left <= begin) and (end <= right)) {
@@ -359,14 +362,14 @@ def validate_replacement(
                     record(
                         "opening_hours",
                         "unknown" if unknown_window else "fail",
-                        "No evidenced operating window covers the whole visit",
+                        f"{item.title} doesn't fit within its known opening hours",
                         item.id
                     );
                 } elif fresh {
                     record(
                         "opening_hours",
                         "pass",
-                        "Whole visit fits the operating window",
+                        f"{item.title} fits within its opening hours",
                         item.id
                     );
                 }
@@ -407,7 +410,7 @@ def validate_replacement(
             record(
                 "eligibility",
                 status,
-                need + (": evidence missing" if status == "unknown" else ": supported" if value else ": not supported"),
+                need + (f": not confirmed for {item.title}" if status == "unknown" else f": supported by {item.title}" if value else f": not supported by {item.title}"),
                 item.id
             );
         }
@@ -417,21 +420,21 @@ def validate_replacement(
                 record(
                     "child_age",
                     "unknown",
-                    "Child admission age evidence is missing",
+                    f"Child age limits for {item.title} are unknown",
                     item.id
                 );
             } elif (not _minor(lo) or not _minor(hi) or (hi < lo)) {
                 record(
-                    "child_age", "fail", "Invalid child admission age range", item.id
+                    "child_age", "fail", f"Child age limits for {item.title} are invalid", item.id
                 );
             } else {
                 allowed = all((lo <= age <= hi) for age in profile.child_ages);
                 record(
                     "child_age",
                     "pass" if allowed else "fail",
-                    "Child ages fit admission limits"
+                    f"All children meet the age limits for {item.title}"
                         if allowed
-                        else "A child is outside admission age limits",
+                        else f"A child is outside the age limits for {item.title}",
                     item.id
                 );
             }
@@ -440,19 +443,19 @@ def validate_replacement(
             record(
                 "currency",
                 "unknown",
-                "Currency mismatch: conversion evidence is absent",
+                f"{item.title} is priced in another currency and can't be converted",
                 item.id
             );
             known_costs = False;
         }
         if ((item.cost_minor is None) or not fresh) {
-            record("price", "unknown", "Current quote is missing", item.id);
+            record("price", "unknown", f"No current price for {item.title}", item.id);
             known_costs = False;
         } elif not _minor(item.cost_minor) {
             record(
                 "price",
                 "fail",
-                "Quote must be nonnegative integer minor units",
+                f"The price for {item.title} is invalid",
                 item.id
             );
             known_costs = False;
@@ -461,13 +464,13 @@ def validate_replacement(
             record(
                 "party_quote",
                 "unknown",
-                "Need a quote for the entire party including taxes/fees",
+                f"Need a price for {item.title} that covers your whole group, with taxes and fees",
                 item.id
             );
             known_costs = False;
         }
         if (item.paid_minor is None) {
-            record("payment", "unknown", "Payment history is incomplete", item.id);
+            record("payment", "unknown", f"The amount paid for {item.title} is unknown", item.id);
             known_costs = False;
         } elif (
             not _minor(item.paid_minor)
@@ -476,7 +479,7 @@ def validate_replacement(
             record(
                 "payment",
                 "fail",
-                "Payment must be within the item's total quote",
+                f"The amount paid for {item.title} is more than its price",
                 item.id
             );
             known_costs = False;
@@ -487,7 +490,7 @@ def validate_replacement(
             record(
                 "arrival_delay",
                 "unknown",
-                "Revised earliest dinner time is missing",
+                "The new earliest dinner time is missing",
                 old.id
             );
         } else {
@@ -497,9 +500,9 @@ def validate_replacement(
                 record(
                     "arrival_delay",
                     "pass" if ok else "fail",
-                    "Dinner follows revised arrival"
+                    "Dinner starts after the new arrival time"
                         if ok
-                        else "Dinner starts before the revised arrival",
+                        else "Dinner starts before the new arrival time",
                     old.id
                 );
             }
@@ -509,10 +512,10 @@ def validate_replacement(
         original_start = resolve(old.start, "original_duration", old.id);
         original_end = resolve(old.end, "original_duration", old.id);
         if original_start is None or original_end is None or original_end <= original_start {
-            record("long_drive", "unknown", "Original travel duration is not established", old.id);
+            record("long_drive", "unknown", f"The original travel time for {old.title} is unknown", old.id);
         } elif old.id in times {
             shorter = times[old.id][1] - times[old.id][0] < original_end - original_start;
-            record("long_drive", "pass" if shorter else "fail", "Alternative must reduce the long travel duration", old.id);
+            record("long_drive", "pass" if shorter else "fail", "The alternative shortens the travel time" if shorter else "The alternative doesn't shorten the travel time", old.id);
         }
     }
     scheduled = sorted(
@@ -533,7 +536,7 @@ def validate_replacement(
     );
     pairs = [(e.from_id, e.to_id) for e in transfers];
     if (len(`set(pairs)) != len(pairs)) {
-        record("transfer", "fail", "Duplicate transfer records");
+        record("transfer", "fail", "A travel time is entered twice for the same pair of items");
     }
     for `edge in transfers {
         if (
@@ -541,7 +544,7 @@ def validate_replacement(
             or (`edge.to_id not in ids)
             or (`edge.from_id == `edge.to_id)
         ) {
-            record("transfer", "fail", "Transfer refers to invalid item IDs");
+            record("transfer", "fail", "A travel time refers to an item that isn't in this trip");
         }
     }
     for (previous, following) in zip(scheduled, scheduled[1:]) {
@@ -550,9 +553,9 @@ def validate_replacement(
         record(
             "overlap",
             "fail" if (gap < 0) else "pass",
-            "Scheduled events overlap"
+            f"{left.title} and {right.title} overlap"
                 if (gap < 0)
-                else "Scheduled events do not overlap",
+                else f"{left.title} and {right.title} don't overlap",
             left.id,
             right.id
         );
@@ -565,7 +568,7 @@ def validate_replacement(
             record(
                 "transfer",
                 "unknown",
-                "Travel-time evidence between these venues is missing",
+                f"Travel time from {left.title} to {right.title} is unknown",
                 left.id,
                 right.id
             );
@@ -576,7 +579,7 @@ def validate_replacement(
             record(
                 "transfer",
                 "unknown",
-                "Travel estimate is for different venues",
+                f"The saved travel time from {left.title} to {right.title} is for different places",
                 left.id,
                 right.id
             );
@@ -585,7 +588,7 @@ def validate_replacement(
                 record(
                     "transfer",
                     "unknown",
-                    "Travel duration is unknown",
+                    f"Travel time from {left.title} to {right.title} is unknown",
                     left.id,
                     right.id
                 );
@@ -593,7 +596,7 @@ def validate_replacement(
                 record(
                     "transfer",
                     "fail",
-                    "Travel minutes must be a nonnegative integer",
+                    "Travel time must be zero or more whole minutes",
                     left.id,
                     right.id
                 );
@@ -601,9 +604,9 @@ def validate_replacement(
                 record(
                     "transfer",
                     "pass" if (gap >= `edge.minutes) else "fail",
-                    "Travel buffer fits"
+                    f"Enough time to get from {left.title} to {right.title}"
                         if (gap >= `edge.minutes)
-                        else "Not enough time to reach the next venue",
+                        else f"Not enough time to get from {left.title} to {right.title}",
                     left.id,
                     right.id
                 );
@@ -611,13 +614,14 @@ def validate_replacement(
         }
     }
     remaining = {key: `set() for key in ids};
+    titles = {item.id: item.title for item in nodes};
     for `edge in trip.dependencies {
         if (
             (`edge.from_id not in ids)
             or (`edge.to_id not in ids)
             or not _minor(`edge.buffer_minutes)
         ) {
-            record("dependency", "fail", "Invalid dependency reference or buffer");
+            record("dependency", "fail", "A linked item or its buffer is invalid");
             continue;
         }
         remaining[`edge.to_id].add(`edge.from_id);
@@ -629,7 +633,8 @@ def validate_replacement(
             record(
                 "dependency",
                 "pass" if fits else "fail",
-                "Dependency boundary fits" if fits else "Dependency boundary violated",
+                (f"{titles.get(`edge.from_id)} ends in time for {titles.get(`edge.to_id)}" if fits
+                    else f"{titles.get(`edge.from_id)} doesn't end in time for {titles.get(`edge.to_id)}"),
                 `edge.from_id,
                 `edge.to_id
             );
@@ -642,7 +647,7 @@ def validate_replacement(
             if not deps
         };
         if not ready {
-            record("dependency_cycle", "fail", "Dependencies contain a cycle");
+            record("dependency_cycle", "fail", "Linked items form a loop");
             break;
         }
         remaining = {
@@ -653,11 +658,11 @@ def validate_replacement(
     }
     retained = old.paid_minor if replacement.action == "replace" else 0;
     if replacement.action == "replace" and old.committed and (old.cost_minor is None or old.paid_minor is None or old.paid_minor < old.cost_minor) {
-        record("unpaid_commitment", "unknown", "Cancellation liability for an unpaid confirmed booking needs authoritative terms", old.id);
+        record("unpaid_commitment", "unknown", f"{old.title} is booked but not fully paid; its cancellation terms are needed to know the cost", old.id);
         known_costs = False;
     }
     if (retained is None) {
-        record("original_payment", "unknown", "Original payment amount is unknown");
+        record("original_payment", "unknown", f"The amount already paid for {old.title} is unknown");
         known_costs = False;
     } elif (
         not _minor(retained)
@@ -667,19 +672,19 @@ def validate_replacement(
             and (retained > old.cost_minor)
         )
     ) {
-        record("original_payment", "fail", "Invalid original payment amount");
+        record("original_payment", "fail", f"The amount paid for {old.title} is invalid");
         known_costs = False;
     }
     if ((old.currency != trip.currency) and (retained != 0)) {
-        record("original_payment", "unknown", "Paid original has a different currency");
+        record("original_payment", "unknown", f"{old.title} was paid in a different currency");
         known_costs = False;
     }
     if not _minor(trip.reserve_minor) {
-        record("reserve", "fail", "Reserve must be nonnegative integer minor units");
+        record("reserve", "fail", "The budget reserve must be zero or more");
         known_costs = False;
     }
     if not _minor(trip.extra_cost_minor) {
-        record("other_costs", "fail", "Other trip costs must be nonnegative integer minor units");
+        record("other_costs", "fail", "Other trip costs must be zero or more");
         known_costs = False;
     }
     total = None;
@@ -703,16 +708,17 @@ def validate_replacement(
         total = ledger["planned_cents"] + ledger["contingency_cents"];
     }
     if (trip.budget_minor is None) {
-        record("budget", "unknown", "Trip budget is not supplied");
+        record("budget", "unknown", "No trip budget is set");
     } elif not _minor(trip.budget_minor) {
-        record("budget", "fail", "Budget must be nonnegative integer minor units");
+        record("budget", "fail", "The trip budget must be zero or more");
     } elif (total is None) {
-        record("budget", "unknown", "Cannot calculate a supported full-trip cost");
+        record("budget", "unknown", "The full trip cost can't be calculated yet");
     } else {
         record(
             "budget",
             "pass" if (total <= trip.budget_minor) else "fail",
-            f"Full trip including reserve and retained payment: {trip.currency} {total} minor units; budget {trip.budget_minor}"
+            f"Trip total {_amount(total, trip.currency)} (with reserve and amounts already paid) is "
+            + ("within" if total <= trip.budget_minor else "over") + f" the {_amount(trip.budget_minor, trip.currency)} budget"
         );
     }
     return finish(total, retained);

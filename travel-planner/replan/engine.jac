@@ -141,7 +141,7 @@ def topological(items: list[dict[str, any]], edges: list[dict[str, any]]) -> tup
         if (
             (`edge['prerequisite_id'] not in ids) or (`edge['dependent_id'] not in ids)
         ) {
-            raise ValueError('Dependency references an item outside this trip');
+            raise ValueError('A link refers to an item outside this trip');
         }
         children[`edge['prerequisite_id']].append(`edge['dependent_id']);
         indegree[`edge['dependent_id']] += 1;
@@ -163,7 +163,7 @@ def topological(items: list[dict[str, any]], edges: list[dict[str, any]]) -> tup
         }
     }
     if (len(ordered) != len(ids)) {
-        raise ValueError('Dependencies must not contain a cycle');
+        raise ValueError('Linked items can\'t form a loop');
     }
     return (ordered, children);
 }
@@ -282,7 +282,7 @@ def save_dependency(
                 nodes[item_id]['category']
                 not in {'transport', 'stay', 'food', 'activity'}
             ) {
-                raise ValueError('Dependencies must link scheduled travel items');
+                raise ValueError('Only scheduled activities, meals, stays and transport can be linked');
             }
         }
         if remove {
@@ -302,7 +302,7 @@ def save_dependency(
                 > start(nodes[dependent_id])
             ) {
                 raise ValueError(
-                    'The original schedule already violates this dependency; adjust times or duration first'
+                    'The current schedule already breaks this link. Adjust the times or duration first.'
                 );
             }
         }
@@ -322,24 +322,24 @@ def validate(state: any, nodes: any, changes: any, retained_cents: any) -> any {
         before = original[item['id']];
         if before['protected'] {
             raise ValueError(
-                'Fixed or completed item conflicts: {}'.format(before['title'])
+                '{} is fixed or completed and can\'t move'.format(before['title'])
             );
         }
         if not (
             state['trip']['start_date'] <= item['date'] <= state['trip']['end_date']
         ) {
             raise ValueError(
-                'Repair moves {} outside trip dates'.format(item['title'])
+                'This plan moves {} outside the trip dates'.format(item['title'])
             );
         }
         if ((item['journey']['arrival_date'] if item.get('journey') else end(item).date().isoformat()) > state['trip']['end_date']) {
-            raise ValueError('Repair ends {} after the trip'.format(item['title']));
+            raise ValueError('This plan has {} ending after the trip'.format(item['title']));
         }
         if (
             item['latest_start']
             and (start(item) > latest(item))
         ) {
-            raise ValueError('Latest-start window missed for {}'.format(item['title']));
+            raise ValueError('{} would start after its latest allowed time'.format(item['title']));
         }
     }
     for `edge in state['dependencies'] {
@@ -350,7 +350,7 @@ def validate(state: any, nodes: any, changes: any, retained_cents: any) -> any {
             )
             > start(nodes[`edge['dependent_id']])
         ) {
-            raise ValueError('Repair violates a downstream timing boundary');
+            raise ValueError('This plan leaves too little time before a linked item');
         }
     }
     scheduled = [
@@ -368,13 +368,13 @@ def validate(state: any, nodes: any, changes: any, retained_cents: any) -> any {
             item['latest_start']
             and (start(item) > latest(item))
         ) {
-            raise ValueError('Latest-start window missed for {}'.format(item['title']));
+            raise ValueError('{} would start after its latest allowed time'.format(item['title']));
         }
     }
     for (previous, following) in zip(scheduled, scheduled[1:]) {
         if (end(previous) > start(following)) {
             raise ValueError(
-                'Schedule overlap: {} and {}'.format(
+                '{} and {} would overlap'.format(
                     previous['title'], following['title']
                 )
             );
@@ -382,7 +382,7 @@ def validate(state: any, nodes: any, changes: any, retained_cents: any) -> any {
     }
     total = sum(i['cost_cents'] for i in nodes.values()) + retained_cents;
     if (state['trip']['budget_cents'] and (total > state['trip']['budget_cents'])) {
-        raise ValueError('Repair exceeds the trip budget');
+        raise ValueError('This plan goes over the trip budget');
     }
     return total;
 }
@@ -425,7 +425,7 @@ def build_combination(
             if state.get('journey') { raise ValueError('Use the journey planner for replacements; this backup source cannot verify city and transport-leg assignments.'); }
             if before['protected'] {
                 raise ValueError(
-                    'Fixed or completed item conflicts: {}'.format(before['title'])
+                    '{} is fixed or completed and can\'t move'.format(before['title'])
                 );
             }
             options = backups_for(before) if inventory is None else [b for b in inventory if b['item_id'] == item_id];
@@ -462,15 +462,15 @@ def build_combination(
                     'before': before,
                     'after': item,
                     'backup_id': backup['id'] if backup else '',
-                    'reason': 'Interrupted item replaced'
+                    'reason': 'Replaced because it was canceled'
                         if forced_replace
-                        else 'Operating window missed; mock backup selected'
+                        else 'Replaced because it can no longer happen in time'
                             if (backup and missed)
-                            else 'Traveler-selected mock backup'
+                            else 'Backup you chose'
                                 if backup
-                                else 'Delayed event'
+                                else 'The delayed item'
                                     if `root
-                                    else 'Downstream dependency moved'
+                                    else 'Moved because it follows the delayed item'
                 }
             );
         }
@@ -481,9 +481,9 @@ def build_combination(
         'projected_total_cents': total,
         'replacement_cash_cents': new_cash,
         'retained_paid_cents': retained,
-        'refund_note': 'Refund eligibility unknown; no refunds deducted.',
+        'refund_note': 'Refunds are unknown, so none are subtracted.',
         'affected_ids': affected,
-        'validation': 'Passed schedule, dependency, fixed-item and budget checks',
+        'validation': 'Passes the timing, linked-item, fixed-item and budget checks.',
         'mock': True
     };
 }

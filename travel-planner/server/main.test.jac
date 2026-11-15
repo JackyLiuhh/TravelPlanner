@@ -172,7 +172,7 @@ test "fixed conflicts, cycles, invalid inputs and unknown timestamps are rejecte
         replan_save_rules(trip, car["id"], 30, "2026-11-01T17:00", True);
         conflict = propose_replan(trip, disrupted["id"], "delayed", 180);
         assert conflict["proposals"] == [];
-        assert "Fixed or completed" in conflict["warnings"][0];
+        assert "is fixed or completed" in conflict["warnings"][0];
         caught = False;
         try { replan_save_dependency(trip, car["id"], disrupted["id"], 0); } except ValueError { caught = True; }
         assert caught;
@@ -234,7 +234,7 @@ test "budget violations and independent fixed timing boundaries block repairs" {
         finally { conn.close(); }
         impossible = propose_replan(trip, dinner["id"], "interrupted");
         assert impossible["proposals"] == [];
-        assert "Repair exceeds the trip budget" in impossible["warnings"];
+        assert "This plan goes over the trip budget" in impossible["warnings"];
         conn = _connect();
         try { conn.execute("UPDATE trips SET budget_cents=150000 WHERE id=?", (trip,)); conn.commit(); }
         finally { conn.close(); }
@@ -246,7 +246,7 @@ test "budget violations and independent fixed timing boundaries block repairs" {
         for proposal in revised["proposals"] {
             assert boundary.id not in [c["item_id"] for c in proposal["changes"]];
         }
-        assert any(["Schedule overlap" in warning for warning in revised["warnings"]]);
+        assert any(["would overlap" in warning for warning in revised["warnings"]]);
     }
 }
 
