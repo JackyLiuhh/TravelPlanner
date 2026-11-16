@@ -107,12 +107,12 @@ Offline AI regressions: `jac test assistant/test_workflow.jac`.
 
 ## Guided backup and replan demo
 
-For the connected P1/P2/P3/P4 flow, choose **Try connected backup plans** in the
+For the connected P1/P2/P3/P4 flow, choose **Try backup plans for rain** in the
 sidebar, or the weather/arrival-delay sample buttons in **Backup plans**. Those
 plans are directly reviewed and passed to P4. The older guided demo below is
 retained as a separate legacy example.
 
-Click **Start backup & replan demo** in the sidebar. Each start saves a separate Boston/USD trip with six scheduled items, a USD 1,500 budget, dependencies and a protected museum visit.
+Click **Walk through a flight delay** in the sidebar. Each start saves a separate Boston/USD trip with six scheduled items, a USD 1,500 budget, dependencies and a protected museum visit.
 
 1. **Generate backups:** Dinner is preselected. Click **Find backup plans** to fetch up to two synthetic dining alternatives. For rain backups, select the rain scenario and **Outdoor harbor walk**.
 2. **Simulate & replan:** Continue, keep **Flight arrival** delayed by **180 minutes**, and click **Generate replan options**. Compare three alternatives, optionally build a custom combination, then accept or reject a proposal.

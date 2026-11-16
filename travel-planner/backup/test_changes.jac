@@ -128,7 +128,7 @@ test "DST folds are explicit and ambiguous timing never gets a guessed differenc
     ambiguous = replace(candidate, item=replace(candidate.item, start=replace(candidate.item.start, fold=None)));
     c = describe_changes(trip, ambiguous, r, CHANGE_CLOCK);
     assert c["schedule"]["start_shift_minutes"] is None;
-    assert any("Ambiguous DST" in s for s in c["unknown_reasons"]);
+    assert any("happens twice" in s for s in c["unknown_reasons"]);
 }
 
 test "nonpositive duration and nonexistent DST times remain unknown metrics" {

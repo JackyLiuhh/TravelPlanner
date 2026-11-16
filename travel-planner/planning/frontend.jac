@@ -236,14 +236,14 @@ def:pub PlanningPanel(trip_id: str, items: list[ItemView], onGenerated: any = No
     currentItems: any = state.get("items", items) if state else items;
     scheduled = sorted([item for item in currentItems if item.category in ("activity", "food", "stay", "transport")], key=lambda (item: ItemView) -> str { item.date + "T" + item.time; });
     return <section className="card integrated-planning" aria-label="Integrated backup plans">
-        <h3>Alternatives for your trip</h3><p>Prepare different ways to adjust your itinerary, compare their changes, and choose a plan.</p>
-        <p className="muted">Demo inventory and prices are simulated. Acceptance updates this itinerary only.</p>
+        <h3>Alternatives for your trip</h3><p>Choose what the plans should address, then find and compare alternatives. For more accurate checks, add traveler details first.</p>
+        <p className="muted">Inventory and prices are simulated. Accepting a plan updates your itinerary only. Nothing is booked.</p>
         {(<p role="status">Loading trip facts…</p>) if loading else None}
         {(<p role="alert" className="alert error">{failure}</p>) if failure else None}
         {(<p role="status">{notice}</p>) if notice else None}
         <button className="text-button" type="button" disabled={busy} onClick={reload}>Reload trip facts</button>
         {(<div>
-            <details className="planning-facts"><summary>Traveler requirements and trip facts</summary>
+            <details className="planning-facts"><summary>Traveler details and requirements</summary>
                 <form onSubmit={saveFacts}><fieldset disabled={busy}>
                     <div className="validation-controls">
                         <label>Adults<input type="number" min="1" required={True} value={adults} onChange={lambda (e: ChangeEvent) { adults = e.target.value; clear(); }}/></label>
@@ -254,7 +254,7 @@ def:pub PlanningPanel(trip_id: str, items: list[ItemView], onGenerated: any = No
                         <label>Budget reserve<input inputMode="decimal" value={reserve} onChange={lambda (e: ChangeEvent) { reserve = e.target.value; clear(); }}/></label>
                     </div>
                     <label className="replan-check"><input type="checkbox" checked={wheelchair} onChange={lambda (e: ChangeEvent) { wheelchair = e.target.checked; clear(); }}/>Wheelchair access required</label>
-                    <p>Only confirm facts you know. Unconfirmed prices, requirements, hours or travel times remain unknown.</p>
+                    <p>Confirm only what you know. Anything you leave unconfirmed (prices, requirements, hours, travel times) stays unknown.</p>
                     {[<details className="planning-item-facts" key={item.id}><summary>{item.title}</summary>
                         <div className="validation-controls">
                             <label>End time<input type="datetime-local" value={details[item.id]["end"]["local"] if details[item.id] and details[item.id].get("end") else ""}
@@ -272,9 +272,9 @@ def:pub PlanningPanel(trip_id: str, items: list[ItemView], onGenerated: any = No
                             onChange={lambda (e: ChangeEvent) { setEligibility(item.id, need["category"] + ":" + need["code"], e.target.value); }}>
                             <option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label> for need in requirements() if need["strength"] == "hard" and (need["category"] != "dietary" or item.category == "food")]}</div>
                         <label className="replan-check"><input type="checkbox" checked={bool(details[item.id] and details[item.id].get("fees_included"))}
-                            onChange={lambda (e: ChangeEvent) { setFact(item.id, "fees_included", e.target.checked); }}/>Saved price covers the whole party, taxes and fees</label>
+                            onChange={lambda (e: ChangeEvent) { setFact(item.id, "fees_included", e.target.checked); }}/>Saved price is for the whole group, including taxes and fees</label>
                         <button type="button" className="secondary" onClick={lambda { changed = browser.Object.assign({}, confirmed); changed[item.id] = True; confirmed = changed; }}>Confirm these item facts</button>
-                        {(<p>These facts will be recorded when you save.</p>) if confirmed[item.id] else None}
+                        {(<p>Confirmed. Select Save to record these details.</p>) if confirmed[item.id] else None}
                     </details> for item in scheduled]}
                     <div className="validation-controls">{[<label key={item.id}>{"Travel minutes: " + item.title + " to " + scheduled[index + 1].title}
                         <input type="number" min="0" value={routes[item.id + "|" + scheduled[index + 1].id] or ""} onChange={lambda (e: ChangeEvent) {
@@ -291,13 +291,13 @@ def:pub PlanningPanel(trip_id: str, items: list[ItemView], onGenerated: any = No
                 {(<label>Earliest allowed start<input type="datetime-local" value={notBefore} disabled={busy} onChange={lambda (e: ChangeEvent) { notBefore = e.target.value; clear(); }}/></label>) if reason == "timing" else None}
                 <label>Maximum alternatives<select value={limit} disabled={busy} onChange={lambda (e: ChangeEvent) { limit = e.target.value; clear(); }}>{[<option key={str(n)} value={str(n)}>{str(n)}</option> for n in [3, 4, 5]]}</select></label>
             </div>
-            {(<p className="muted">Uses your saved budget. Edit the trip first to change that budget.</p>) if reason == "budget_change" else None}
-            {(<p className="muted">Save the updated traveler requirements above before finding plans.</p>) if reason == "traveler_change" else None}
+            {(<p className="muted">Uses your saved budget. To change it, edit the trip.</p>) if reason == "budget_change" else None}
+            {(<p className="muted">Save the updated traveler details above before finding plans.</p>) if reason == "traveler_change" else None}
             {(<div className="planning-risk-list">{[<label className="replan-check" key={risk["id"]}><input type="checkbox" checked={risk["id"] in selectedRisks} disabled={busy}
                 onChange={lambda (e: ChangeEvent) { selectedRisks = selectedRisks + [risk["id"]] if e.target.checked else [key for key in selectedRisks if key != risk["id"]]; clear(); }}/>
-                {risk["summary"] + (" · Needs evidence" if risk["status"] != "flagged" else "")}</label> for risk in state["risks"]]}
-                {(<p>No risks are established yet. Add trip facts or report a change.</p>) if len(state["risks"]) == 0 else None}</div>) if reason == "detected" else None}
-            <label className="replan-check"><input type="checkbox" checked={useAI} disabled={busy} onChange={lambda (e: ChangeEvent) { useAI = e.target.checked; clear(); }}/>Use AI to choose among validated plans</label>
+                {risk["summary"] + (" · Not confirmed" if risk["status"] != "flagged" else "")}</label> for risk in state["risks"]]}
+                {(<p>No risks found yet. Add traveler details or report a change.</p>) if len(state["risks"]) == 0 else None}</div>) if reason == "detected" else None}
+            <label className="replan-check"><input type="checkbox" checked={useAI} disabled={busy} onChange={lambda (e: ChangeEvent) { useAI = e.target.checked; clear(); }}/>Let AI choose among plans that pass the checks</label>
             <button type="button" className="primary" disabled={busy or (reason == "detected" and len(selectedRisks) == 0)} onClick={lambda { findPlans(); }}>{"Preparing plans…" if busy else "Find alternative plans"}</button>
             {(<section className="planning-results" aria-live="polite"><p>{result["message"]}</p>
                 <div className="backup-grid">{[<article className="backup-option" key={plan["id"]}>
@@ -312,7 +312,7 @@ def:pub PlanningPanel(trip_id: str, items: list[ItemView], onGenerated: any = No
                         <div><dt>Cash due now</dt><dd>{money(plan["comparison"]["cash_needed_now_minor"])}</dd></div>
                         <div><dt>Potential cash not refunded</dt><dd>{money(plan["comparison"]["refund_loss_minor"])}</dd></div>
                         <div><dt>Potential credit</dt><dd>{money(plan["comparison"]["eligible_credit_minor"])}</dd></div></dl>
-                    <p className="muted">Refunds have not been received. Quotes are not an amount due now.</p>
+                    <p className="muted">No refunds assumed. Quotes are not amounts due now.</p>
                     {(<ul>{[<li key={message}>{message}</li> for message in missingReasons(plan)]}</ul>) if not plan["selectable"] else None}
                     <button type="button" className="primary" disabled={busy or not plan["selectable"]} onClick={lambda { review(plan["id"], True); }}>Accept this plan</button>
                     <button type="button" className="secondary" disabled={busy} onClick={lambda { review(plan["id"], False); }}>Keep current plan</button>

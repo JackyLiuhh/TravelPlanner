@@ -63,7 +63,7 @@ def activation_targets(context: dict[str, any], selected: list[dict[str, any]]) 
                 visited.add(child); pending.append(child);
                 existing = targets.setdefault(child, []);
                 if not any(record["id"] == risk["id"] for record in existing) {
-                    existing.append({**risk, "_derived": True, "summary": "Connected arrangement after " + originals[parent].title});
+                    existing.append({**risk, "_derived": True, "summary": "Affected because it follows " + originals[parent].title});
                 }
             }
         }
@@ -126,10 +126,10 @@ def generate_plans(context: dict[str, any], now: datetime, risk_ids: list[str] |
                     }
                 }
                 if reported_transport and not any(option is not None for option in options) {
-                    warnings.append("No verified replacement transport is available for " + item.title);
+                    warnings.append("No confirmed replacement transport found for " + item.title);
                 }
-            } except ValueError { warnings.append("Missing or ambiguous timing prevents searching for " + item.title); }
-        } else { warnings.append(item.title + " is fixed or completed and cannot be changed"); }
+            } except ValueError { warnings.append("Can't search for " + item.title + ": its time is missing or unclear"); }
+        } else { warnings.append(item.title + " is fixed or completed, so it stays as is"); }
         groups.append(options);
     }
     plans = []; rejected = []; seen = set(); searched = 0;
@@ -186,11 +186,11 @@ def generate_plans(context: dict[str, any], now: datetime, risk_ids: list[str] |
         if checked["status"] == "invalid" { rejected.append({"plan_id": plan["id"], "checks": [c for c in checked["checks"] if c["status"] == "fail"], "recorded_plan": plan}); }
         else { plans.append(plan); }
     }
-    if groups and all(groups) and 256 < __import__("math").prod(len(group) for group in groups) { warnings.append("Search stopped after 256 combinations; more plans may exist"); }
+    if groups and all(groups) and 256 < __import__("math").prod(len(group) for group in groups) { warnings.append("Checked the first 256 combinations. More plans may exist."); }
     plans.sort(key=lambda (plan: dict[str, any]) -> tuple[int, int, str] {
         return (0 if plan["selectable"] else 1, plan["comparison"]["changed_item_count"], plan["id"]);
     });
-    mode = "deterministic"; explanation = "Distinct strategies and providers, with passing plans shown first.";
+    mode = "deterministic"; explanation = "Plans that pass every check are listed first.";
     if use_llm and any(plan["selectable"] for plan in plans) {
         try {
             eligible = {plan["id"]: plan for plan in plans if plan["selectable"]};
@@ -200,16 +200,16 @@ def generate_plans(context: dict[str, any], now: datetime, risk_ids: list[str] |
                 raise ValueError("Unsupported model plan IDs");
             }
             plans = [eligible[key] for key in choice.plan_ids]; mode = "llm"; explanation = choice.explanation;
-        } except Exception { warnings.append("Model selection unavailable or invalid; showing deterministic validated plans"); }
+        } except Exception { warnings.append("AI selection isn't available, so all plans that pass the checks are shown."); }
     }
-    message = "Review the proposed changes before accepting." if plans else "No supported plan fits the available facts and constraints.";
-    if excluded_ids and not plans { message = "No other supported plan fits the available facts and constraints. Your current itinerary is unchanged."; }
+    message = "Review the changes before accepting a plan." if plans else "No plan fits your trip details and constraints.";
+    if excluded_ids and not plans { message = "No other plan fits your trip details and constraints. Your itinerary is unchanged."; }
     if not plans and context["facts"].get("inventory_change") == "provider_failure" { message = "Availability could not be refreshed. Please try again."; }
     if context["state"]["trip"]["destination"].strip().lower() not in ("boston", "boston, ma", "boston, usa") or context["trip"].currency != "USD" {
-        message = "The demo inventory currently supports Boston trips in USD.";
+        message = "Backup plans are only available for Boston trips priced in USD for now.";
     }
     if not plans and rejected and all(any(c["code"] == "budget" for c in rejection["checks"]) for rejection in rejected) {
-        message = "No alternative fits your trip budget. Adjust the budget or itinerary and try again.";
+        message = "No alternative fits your budget. Raise the budget or change the itinerary, then try again.";
     }
     return {"contract_version": PLAN_CONTRACT, "validator_version": VALIDATION_VERSION, "trip_id": context["trip_id"], "base_version": context["trip_version"],
         "base_snapshot": context["base_snapshot"], "plans": plans[:max_plans], "evaluated_count": searched,

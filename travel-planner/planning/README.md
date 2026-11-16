@@ -21,7 +21,7 @@ jac run planning/demo.jac
 jac run --dev --host 127.0.0.1 --port 8360 --api-port 8361 travel
 ```
 
-Choose **Try connected backup plans**, or open **Backup plans** and select a
+Choose **Try backup plans for rain**, or open **Backup plans** and select a
 weather or arrival-delay sample. Each sample creates a separate saved trip with
 explicit synthetic traveler, quote, operating-hour, route and risk evidence.
 Select risks, find up to five alternatives, compare the exact changes, keep the
@@ -30,7 +30,7 @@ passing indoor choices. The arrival sample includes both moving dinner and
 changing restaurants. The CLI's third scenario combines weather and a reported
 restaurant closure into two-node alternatives.
 
-Saved trips use the same flow. Expand **Traveler requirements and trip facts**
+Saved trips use the same flow. Expand **Traveler details and requirements**
 to record party composition, dietary/pet/accessibility requirements, timezone,
 reserve, end times, hours, eligibility, whole-party pricing and route estimates.
 Confirm item facts explicitly before saving new evidence. Editing a profile

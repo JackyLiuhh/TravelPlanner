@@ -247,9 +247,9 @@ def:pub ItineraryReview(trip_id: str, currency: str, items: any, request: any,
                 <h2 id="itinerary-review-title" tabIndex={-1}>Impact and alternatives</h2></div>
             <button type="button" className="itinerary-chip" aria-label="Close review" disabled={busy and bool(result)} onClick={onClose}>×</button>
         </div>
-        <p className="review-peek-summary">{planTitle(plan) if plan else "Choose a stop and review its impact. Expand to enter the details."}</p>
+        <p className="review-peek-summary">{planTitle(plan) if plan else "Choose a stop to see what a change affects. Expand to enter details."}</p>
         <div className="review-scroll">
-        <p className="section-caption">Compare against your saved itinerary. Options use synthetic inventory and current trip facts.</p>
+        <p className="section-caption">Options are compared with your saved itinerary. Inventory is simulated.</p>
         {(<p className="alert error" role="alert">{failure}</p>) if failure else None}
         {(<p className="alert success" role="status">{notice}</p>) if notice else None}
         {(<button type="button" className="text-button" disabled={busy or loading} onClick={load}>Reload trip impact</button>) if failure or notice else None}
@@ -263,7 +263,7 @@ def:pub ItineraryReview(trip_id: str, currency: str, items: any, request: any,
                 }}>{"Hide controls" if showReport and recordedMode else "Find fresh alternatives" if recordedMode else "Hide report" if showReport else "Edit report"}</button>
         </div>) if len(options) > 0 and selected_item else None}
         {(<form id="itinerary-review-report" onSubmit={generate} className="itinerary-review-form" hidden={len(options) > 0 and not showReport}>
-            <p className="section-caption">Find options for the recorded alert using your saved trip facts.</p>
+            <p className="section-caption">Find options for this alert based on your saved trip details.</p>
             {(<section className="review-impact"><h3>Arrangements to check</h3>
                 <ol>{[<li key={item["id"]}>{item["title"]}</li> for item in affected_items]}</ol></section>) if len(affected_items) > 0 else None}
             <button type="submit" className="primary" disabled={busy or checking or not selected_item}>
@@ -290,7 +290,7 @@ def:pub ItineraryReview(trip_id: str, currency: str, items: any, request: any,
             {(<p className="section-caption">Add a date and time for this item before reporting a delay.</p>) if reason == "timing" and selected_item and (not selected_item["date"] or not selected_item["time"]) else None}
             {(<section className="review-impact"><h3>Arrangements to check</h3>
                 <ol>{[<li key={item["id"]}>{item["title"] + (" · Fixed or completed" if item["protected"] else "")}</li> for item in affected_items]}</ol>
-                {(<p className="section-caption">No downstream dependencies are saved for this item. Schedule rules are available in Replan.</p>) if len(affected_items) == 1 else None}
+                {(<p className="section-caption">No other items are linked to this one. To link items, open Schedule rules in Replan.</p>) if len(affected_items) == 1 else None}
             </section>) if selected_item else None}
             <button className="primary" type="submit"
                 disabled={busy or checking or not selected_item or not reason or (reason == "timing" and
@@ -346,7 +346,7 @@ def:pub ItineraryReview(trip_id: str, currency: str, items: any, request: any,
                 <p className="section-caption">Totals include any saved reserve. Quotes are estimates.</p>
                 {(<div className="review-unresolved"><strong>Needs confirmation</strong>
                     <ul>{[<li key={message}>{message}</li> for message in missing]}</ul>
-                    <p>Complete the missing facts in Backup plans, then refresh these options.</p>
+                    <p>Add the missing details in Backup plans, then refresh these options.</p>
                     <button type="button" className="itinerary-chip" disabled={busy} onClick={lambda { onFacts(); }}>Open saved trip facts</button></div>) if not plan["selectable"] else None}
             </div>) if plan else None}
         </section>) if result else None}

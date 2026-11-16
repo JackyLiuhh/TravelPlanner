@@ -15,16 +15,16 @@ import journey.model as journey_model;
 
 def apply_backup(conn: any, state: dict[str, any], proposal: dict[str, any], now: datetime) -> None {
     alternative_from_dict(proposal);
-    if proposal.get("validator_version") != VALIDATION_VERSION { raise ValueError("Validation rules changed; find fresh plans"); }
-    if datetime.fromisoformat(proposal["expires_at"]) <= now { raise ValueError("Backup evidence expired; find fresh plans before accepting"); }
-    if not proposal["selectable"] { raise ValueError("An unresolved plan cannot be accepted"); }
+    if proposal.get("validator_version") != VALIDATION_VERSION { raise ValueError("The checks have been updated. Find new plans."); }
+    if datetime.fromisoformat(proposal["expires_at"]) <= now { raise ValueError("This plan has expired. Find new plans before accepting one."); }
+    if not proposal["selectable"] { raise ValueError("This plan still needs confirmation and can't be accepted yet."); }
     context = build_context(state, read_facts(conn, state["trip"]["id"]), now);
-    if context["base_snapshot"] != proposal["base_snapshot"] { raise ValueError("Planning inputs changed; find fresh plans"); }
+    if context["base_snapshot"] != proposal["base_snapshot"] { raise ValueError("Your trip details changed. Find new plans."); }
     originals = {item.id: item for item in context["trip"].items};
     current_risks = {risk["id"]: risk for risk in context["risks"]};
     selected = [];
     for key in proposal["risk_ids"] {
-        if key not in current_risks { raise ValueError("Activation risk changed; find fresh plans"); }
+        if key not in current_risks { raise ValueError("The risk this plan addressed has changed. Find new plans."); }
         selected.append(current_risks[key]);
     }
     (targets, _) = activation_targets(context, selected);
@@ -36,19 +36,19 @@ def apply_backup(conn: any, state: dict[str, any], proposal: dict[str, any], now
             updated = replace(previous, item=replace(original, start=previous.item.start, end=previous.item.end));
         } else {
             try { updated = observe(context["trip"], original, previous.provider_id, previous.item.start, now, context["facts"].get("inventory_change", "unchanged")); }
-            except (TimeoutError, LookupError) as exc { raise ValueError("Provider could not reconfirm this plan; find fresh alternatives") from exc; }
+            except (TimeoutError, LookupError) as exc { raise ValueError("The provider couldn't reconfirm this plan. Find new plans.") from exc; }
             reviewed_facts = asdict(previous.item); current_facts = asdict(updated.item);
             reviewed_facts.pop("evidence", None); current_facts.pop("evidence", None);
             if updated.provider_id != previous.provider_id or reviewed_facts != current_facts {
-                raise ValueError("Inventory details changed; review a fresh plan before accepting");
+                raise ValueError("Availability or prices changed. Review a new plan before accepting.");
             }
         }
-        if previous.replaces_id not in targets { raise ValueError("Activation target changed; find fresh plans"); }
+        if previous.replaces_id not in targets { raise ValueError("The affected item changed. Find new plans."); }
         activations.extend(risk_context(context, risk, previous.replaces_id) for risk in targets[previous.replaces_id]);
         candidates.append(updated);
     }
     checked = validate_plan(context["trip"], tuple(activations), tuple(candidates), now, context.get("connection_estimates", ()));
-    if checked["status"] != "valid" { raise ValueError("Plan no longer passes all traveler, evidence, budget and timing checks"); }
+    if checked["status"] != "valid" { raise ValueError("This plan no longer passes the traveler, timing and budget checks. Find new plans."); }
     route_items = journey_model.replacement_items(state, [asdict(c) for c in candidates]);
     facts = deepcopy(context["facts"]);
     for candidate in candidates {

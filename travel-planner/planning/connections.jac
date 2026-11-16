@@ -83,15 +83,15 @@ def connection_boundaries(trip: TripContext, nodes: tuple[ScheduledItem, ...], e
 def connection_checks(nodes: tuple[ScheduledItem, ...], constraints: tuple[Transfer, ...], now: datetime) -> list[dict[str, any]] {
     current = {item.id:item for item in nodes}; checks = [];
     for route in constraints {
-        status = "unknown"; code = "transfer_evidence"; message = "Supplemental travel estimate needs current evidence";
+        status = "unknown"; code = "transfer_evidence"; message = "The added travel time needs a current source";
         minutes = route.minutes;
         if usable(route, now) and minutes is not None {
             code = "transfer";
             try {
                 gap = (instant(current[route.to_id].start) - instant(current[route.from_id].end)).total_seconds() / 60;
                 status = "pass" if gap >= minutes else "fail";
-                message = "Supplemental connection needs at least " + str(minutes) + " minutes";
-            } except ValueError { message = "Supplemental connection needs explicit unambiguous times"; }
+                message = "The connection needs at least " + str(minutes) + " minutes";
+            } except ValueError { message = "The connection needs clear start and end times"; }
         }
         checks.append({"code":code, "status":status, "message":message, "item_ids":[route.from_id, route.to_id]});
     }
