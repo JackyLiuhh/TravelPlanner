@@ -2,7 +2,7 @@
 
 The mock MVP uses fixture-backed inventory, policy and risk data through local adapters; no external provider is required for the connected mock flow.
 
-Read-only [LiteAPI hotel previews and Geoapify place discovery](FREE_PROVIDERS.md) are implemented as of October 28, 2026 and used by the browser panels. The earlier [Expedia Rapid adapter](EXPEDIA.md) remains available through its endpoints. Account keys and live access have not been verified in this workspace. Other integrations below remain planned; fixture-backed adapters should share the same contracts as future providers. Provider access, pricing, licensing, and partner approval must be confirmed for deployment. The original provider survey below was reviewed on September 30, 2026.
+Read-only [LiteAPI hotel previews and Geoapify place discovery](FREE_PROVIDERS.md) are implemented as of October 28, 2026 and used by the browser panels. The earlier [Expedia Rapid adapter](EXPEDIA.md) remains available through its endpoints. Account keys and live access have not been verified in this workspace. AI flight planning also supports dated web-listing research with source-bound flight details and airport map coordinates; this is not a booking or inventory API. See the [flight search guide](../travel-planner/README.md#flight-listings-on-the-trip-map). Other integrations below remain planned; fixture-backed adapters should share the same contracts as future providers. Provider access, pricing, licensing, and partner approval must be confirmed for deployment. The original provider survey below was reviewed on September 30, 2026.
 
 ## Candidate providers
 

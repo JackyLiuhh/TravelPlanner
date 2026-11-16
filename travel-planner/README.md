@@ -12,14 +12,39 @@ The **AI planner** combines initial planning, backup preparation and disruption
 replanning. A persistent conversation sidebar stays beside your itinerary,
 bookings, packing and budget. Chat history is stored separately for each trip.
 
-1. Create or select a trip with dates, departure/return locations, destination, currency and budget. For a complete route, use **Route** to set ordered city stays, time zones and transport buffers, then choose **Plan this journey with AI**. See [journey planning](../docs/JOURNEY_PLANNING.md).
-2. Choose **Plan my trip**, **Find alternatives**, or **Something changed**.
-3. Edit the prompt in the conversation sidebar and send it. **Ask a question**
-   answers without generating a draft. Web search can be switched off.
-4. Review proposals in the main area: before/after changes, estimated totals,
-   schedule checks and uncertainty. Refine a proposal in chat or keep your plan.
+1. Create or select a trip with dates, departure/return locations, destination, currency and budget. Its route appears immediately on the interactive trip map; **Route** is optional for editing city stops. See [journey planning](../docs/JOURNEY_PLANNING.md).
+2. Choose **Plan my trip**, **Find alternatives**, or **Something changed** to get one focused option immediately using your saved trip and preferences. Backup and replan requests change only the necessary items. Internal button prompts stay out of the conversation; the assistant proceeds with explicit assumptions instead of asking follow-up questions. If no disruption is recorded, **Something changed** prepares a labeled contingency option.
+3. Send custom requests in the conversation sidebar. **Ask a question**
+   answers without generating a draft. Web search is off by default for faster drafts; switch it on when you want current sources.
+4. Explore the map while GPT works: click a city to see its activities, click a route for transport details, filter by day, or zoom and pan. The same map previews the returned draft before saving, with links to review the draft or open saved itinerary items. Estimated routes remain visible when flight search has no results.
 5. Acknowledge the estimates and choose **Save this plan** to write the reviewed
    changes. Chat and search never directly change itinerary items.
+
+The **Backup plans** and **Replan** tabs use this same AI flow. Add optional details
+or run them directly. Saved notes, traveler preferences, budget, itinerary, flight
+listings and pending reported changes are included automatically. Simulated events
+remain labeled as simulations. Locations without coordinates remain available in
+the map's location list; estimated flights never imply confirmed schedules or
+availability. The map uses static routes and clickable markers. Without an AI key, planning actions still
+produce the basic local estimated itinerary; ordinary chat requires a key.
+
+Departure and return connections stay on the map even when the itinerary omits
+a leg or flight search has no result. Missing legs use clearly labeled illustrative
+flights, with no invented airline, flight number or fare. A blank return location
+uses the departure location for the map preview. These connections remain accessible
+while filtering activities by day, including when coordinates are unavailable.
+Outbound paths are cyan and return paths are lavender, with static direction
+arrows and separate curves. Dashed paths indicate estimated flights; hovering
+over a flight card or route highlights its path, and clicking opens its details.
+Airport codes such as **DTW**, including `Detroit (DTW)`, use coordinates from
+the bundled airport catalog even when no flight listing was found. Saved routes
+with missing coordinates are filled for display without changing the itinerary.
+
+### Flight listings on the trip map
+
+**Search flight listings** is on by default for planning tasks with a saved departure location. The assistant searches dated outbound and return listings with your existing OpenAI key, attaches matching airline/flight numbers, airports, local times and source links, and includes a fare only when the listing explicitly supports the same currency and whole-party one-leg amount. This adds a bounded web-research call; turn the option off for faster estimated drafts. Web listings do not establish live seat availability or a bookable quote. Missing or unmatched details stay labeled estimates.
+
+Review and save the draft, then open **Itinerary → Map**. Click a flight icon to see its listing and source. Sourced flight routes use actual airport coordinates from the [OurAirports public-domain dataset](https://github.com/datasets/airport-codes), retrieved November 16, 2026; the drawn path is an illustration, not a live flight track. Editing the flight's schedule, route or fare invalidates its saved research details. Flight search never books or pays for travel.
 
 ### Pet-friendly and trip pace
 
@@ -72,25 +97,31 @@ provider adapters are retained but their panels are removed from the main UI.
 
 OpenAI's Responses API performs optional web research with clickable sources.
 Planning requests use a separate structured-output call to convert the research
-and trip context into bounded drafts. Web research is limited to three built-in
+and trip context into bounded drafts. Web research is limited to two built-in
 tool calls and concise evidence notes, including representative pet policies.
 Policies without evidence remain explicitly unverified. Turn off **Search the web**
 for a faster draft with estimated costs: pet and pace preferences still apply.
-Ordinary questions use one call; planning with search uses two. Planning without
+Ordinary questions use one call; planning uses one call with both searches off, or two when general web research or flight search is enabled. Planning without
 search and explicit **Edit trip details** requests skip the research call and
-build a draft directly. Local validation may add at most one correction call.
+build a draft directly. Draft mode uses no automatic correction calls.
 Planning history includes conversation text without resending old research and
-review metadata. Model and search usage incur OpenAI API charges. Missing keys, quota
-errors and timeouts appear in the conversation; no mock answer is substituted.
+review metadata. Model and search usage incur OpenAI API charges. If AI planning
+fails, a clearly labeled local template supplies a basic estimated trip. Ordinary
+chat errors still appear in the conversation.
 API keys and booking references are not sent as model context. Server keys are never returned to the browser; user keys are submitted only with their AI requests.
 
-Local checks cover trip dates, schedule overlap, stored dependencies, latest-start
-rules, fixed items and the whole-trip budget including an existing reserve.
-Paid, confirmed, completed, fixed and booking-reference items stay unchanged.
-Prices remain estimates: these checks do **not** establish live availability,
-opening hours, transfer feasibility, dietary/accessibility/pet eligibility,
-refunds or booking terms. New GPT drafts require numeric planning estimates for every item. If a draft fails local budget or schedule checks, one automatic correction is attempted before review. Older drafts with missing prices can be completed through GPT or by entering traveler estimates and rerunning the budget check. Unknown prices are never silently counted as free. The existing
-synthetic full-trip validator is separate from this AI draft workflow.
+The AI workspace uses draft mode without blocking schedule, transfer, dependency
+or budget checks. Route legs are put into city order locally. It keeps proposed
+activities and shows budget overruns as notes. No AI correction call is made for
+planning, backups or replanning. If the response is empty, unusable or unavailable,
+a local template produces a basic estimated trip with daily activities, meals,
+lodging and departure/return travel from saved locations. Placeholder flights and
+provisional time zones are labeled; they are never presented as researched listings.
+Paid, confirmed, completed, fixed and booking-reference items stay unchanged, and
+saving still requires review. Unknown prices remain visible and must be filled
+before saving; they are never silently treated as free. Direct service callers
+retain strict checks unless they pass `draft_only=True`. The existing synthetic
+full-trip validator is separate from this AI draft workflow.
 
 Drafts expire after 30 minutes. Acceptance checks the current trip and facts
 again under a write transaction, rejecting stale drafts; request IDs and review
@@ -155,7 +186,7 @@ A fresh clone needs an independent Python 3.14 environment; `setup.sh` creates i
 
 ## LiteAPI hotel backups and Geoapify places
 
-The **Backup plans** and **Replan** tabs include **LiteAPI + Geoapify** panels. Configure `LITEAPI_API_KEY` with your free sandbox key for city-based hotel rates and automatic Plan B/C drafts; configure `GEOAPIFY_API_KEY` for nearby hotel, restaurant and attraction suggestions. Neither requires Expedia access. The hotel drafts check stored itinerary constraints and show costs and downstream schedule changes; Geoapify suggestions have unknown prices and availability. These are read-only previews requiring further validation. See [free-provider setup and usage](../docs/FREE_PROVIDERS.md). Legacy Expedia endpoints remain available; see [their setup guide](../docs/EXPEDIA.md).
+Legacy LiteAPI, Geoapify and Expedia modules remain available for focused demos and service integrations. The main **Backup plans** and **Replan** tabs now send requests directly to the shared AI planner. See [free-provider setup and usage](../docs/FREE_PROVIDERS.md) and the [Expedia setup guide](../docs/EXPEDIA.md) for the optional legacy adapters.
 
 ## Wikipedia destination and attraction discovery
 

@@ -1,8 +1,7 @@
 """Jacplan's responsive trip workspace."""
 import from server.main { TripView, ItemView, list_trips, save_trip, delete_trip,
     list_items, save_item, set_item_state, delete_item, replan_demo, create_planning_demo }
-import from backup.frontend { BackupPanel }
-import from replan.frontend { ReplanPanel }
+import from assistant.task_panel { AITaskPanel }
 import from demo.frontend { GuidedDemo }
 import from itinerary.actions { ItemActions, focusItineraryControl }
 import from itinerary.places { ItineraryDays, ItineraryPlaces, itineraryMapLink }
@@ -20,8 +19,8 @@ import from server.main { assistant_review, assistant_update_prices, assistant_s
 def:pub app -> JsxElement {
     has trips: list[TripView] = [], items: list[ItemView] = [], selected: str = "",
         tab: str = "planner", aiData: dict[str, any] = {}, aiReload: int = 0, aiCompose: int = 0,
-        aiMode: str = "ask", aiText: str = "", day: str = "", loading: bool = True, busy: bool = False,
-        error: str = "", notice: str = "", requestRef: Ref[int] = Ref(0),
+        aiMode: str = "ask", aiText: str = "", aiComposeTrip: str = "", aiAutoRun: bool = False, aiWorking: bool = False, day: str = "", loading: bool = True, busy: bool = False,
+        error: str = "", notice: str = "", requestRef: Ref[int] = Ref(0), activeAITrip: Ref[str] = Ref(""),
         trip_form: bool = False, trip_review: bool = False, editing_trip: str = "", trip_title: str = "",
         departure_location: str = "", return_location: str = "",
         destination: str = "", start_date: str = "", end_date: str = "",
@@ -35,6 +34,7 @@ def:pub app -> JsxElement {
         mapRevision: int = 0, itineraryView: str = "map", journeyData: any = {},
         item_stop: str = "", item_leg: str = "", arrival_date: str = "", arrival_time: str = "", item_duration: str = "60";
 
+    activeAITrip.current = selected;
     browser: any = window;
     def money(cents: int, unit: str) -> str {
         value = abs(cents);
@@ -89,13 +89,12 @@ def:pub app -> JsxElement {
         window.requestAnimationFrame(lambda { focusItineraryControl("item-title"); });
     }
     def openReview(item_id: str, reason: str, control: str, delay: str = "") -> None {
-        if busy or loading { return; }
-        if tab != "itinerary" { chooseTab("itinerary"); }
-        else {
-            resetReview();
-            if control == "trip-actions-launch" { day = ""; }
-        }
-        reviewRequest = {"item": item_id, "reason": reason, "control": control, "delay": delay};
+        if busy or aiWorking or loading { return; }
+        request = "Replan my saved trip using reported changes and preferences. Keep unaffected bookings. If no change is recorded, offer a labeled contingency.";
+        if item_id { request += " Focus on saved item " + item_id + "."; }
+        if reason { request += " Reported change: " + reason[:1000] + "."; }
+        if delay { request += " Delay in minutes: " + delay[:10] + "."; }
+        resetReview(); runAI("replan", request);
     }
     def closeReview -> None {
         control = reviewRequest["control"];
@@ -105,13 +104,23 @@ def:pub app -> JsxElement {
         });
     }
     def openMapReview(item_id: str, risks: any, options: any, option: str, control: str) -> None {
-        if busy or loading { return; }
-        resetReview(); day = "";
-        reviewRequest = {"item": item_id, "reason": "", "control": control, "risks": risks,
-            "options": options, "option": option};
+        if busy or aiWorking or loading { return; }
+        request = "Suggest a practical backup for my saved trip, keeping bookings and budget.";
+        if item_id { request += " Focus on saved item " + item_id + "."; }
+        selectedOptions = [candidate for candidate in options if candidate.get("id") == option];
+        if len(selectedOptions) > 0 { request += " Consider this alternative: " + str(selectedOptions[0].get("title", selectedOptions[0].get("summary", "")))[:600]; }
+        resetReview(); runAI("backup", request);
     }
     def jumpTimeline -> None {
+        tab = "itinerary";
         window.requestAnimationFrame(lambda { focusItineraryControl("itinerary-timeline"); });
+    }
+    def jumpDraft -> None {
+        tab = "planner";
+        window.requestAnimationFrame(lambda {
+            heading: any = document.querySelector(".ai-draft-heading h2");
+            if heading { heading.setAttribute("tabindex", "-1"); heading.focus(); heading.scrollIntoView({"block": "start"}); }
+        });
     }
     def showItineraryControls -> None {
         toolbar: any = document.getElementById("itinerary-view-toolbar");
@@ -124,7 +133,7 @@ def:pub app -> JsxElement {
         window.requestAnimationFrame(lambda { showItineraryControls(); });
     }
     def jumpStop(id: str) -> None {
-        day = "";
+        tab = "itinerary"; day = ""; placeId = id; railView = "places";
         window.requestAnimationFrame(lambda {
             control: any = document.getElementById("place-details-" + id);
             if control { control.focus(); control.click(); }
@@ -163,9 +172,33 @@ def:pub app -> JsxElement {
     async def createIntegratedDemo(scenario: str = "rain") -> None;
     async def backupApplied -> None;
     def composeAI(mode: str, text: str) -> None {
-        aiMode = mode; aiText = text; aiCompose += 1; tab = "planner";
+        aiComposeTrip = selected; aiAutoRun = False; aiMode = mode; aiText = text; aiCompose += 1; tab = "planner";
+    }
+    def runAI(mode: str, text: str) -> None {
+        if busy or aiWorking or loading or trip_form { return; }
+        aiComposeTrip = selected; aiAutoRun = True; aiMode = mode; aiText = text; aiCompose += 1; tab = "planner";
+        window.requestAnimationFrame(lambda {
+            routePreview: any = document.querySelector(".trip-map");
+            if routePreview { routePreview.scrollIntoView({"block": "start"}); }
+        });
+    }
+    def receiveAIBusy(working: bool, trip_id: str, task: str = "ask") -> None {
+        if trip_id == activeAITrip.current {
+            aiWorking = working;
+            if working {
+                aiMode = task;
+                if task in ["plan", "backup", "replan"] {
+                    tab = "planner";
+                    window.requestAnimationFrame(lambda {
+                        routePreview: any = document.querySelector(".trip-map");
+                        if routePreview { routePreview.scrollIntoView({"block": "start"}); }
+                    });
+                }
+            }
+        }
     }
     def receiveAI(data: dict[str, any], generated: bool) -> None {
+        if data.get("trip_id") != activeAITrip.current { return; }
         aiData = data;
         if generated { tab = "planner"; }
     }
@@ -211,6 +244,9 @@ def:pub app -> JsxElement {
         } except Exception {}
         await refresh();
     }
+    can with [selected] entry {
+        aiData = {}; aiWorking = False; aiMode = "ask"; aiText = ""; aiCompose = 0; aiAutoRun = False; aiComposeTrip = "";
+    }
     can with [selected, tab, loading] entry {
         if selected and not loading {
             try { browser.localStorage.setItem("roam.workspace", browser.JSON.stringify({"trip_id": selected, "tab": tab})); }
@@ -233,6 +269,9 @@ def:pub app -> JsxElement {
     packed = len([title for title in packing if packingChecked(title)]);
     bookings = [item for item in items if item.category in ["transport", "stay"]];
     itineraryItems = [item for item in items if item.category in ["activity", "food", "transport", "stay"]];
+    mapDrafts = [draft for draft in aiData.get("drafts", []) if draft["status"] == "pending"] if aiData.get("trip_id") == selected else [];
+    mapDraft: any = mapDrafts[0] if len(mapDrafts) > 0 and not aiWorking else None;
+    savedRoute: any = journeyData.get("journey");
     shown = [item for item in items if (
         item.cost_cents > 0 if tab == "budget" else
         item.category == "packing" if tab == "packing" else
@@ -296,12 +335,13 @@ def:pub app -> JsxElement {
                         <h3 id="trip-brief-summary" tabIndex={-1}>{trip_title}</h3>
                         <p>{destination + " · " + prettyDate(start_date) + " – " + prettyDate(end_date)}</p>
                         <p>{"Budget " + currency + " " + budget if budget else "No budget set"}</p>
-                        <p className="section-caption">After you create the trip, add travelers and their requirements in Backup plans.</p>
+                        <p className="section-caption">The assistant uses these details. Add traveler needs or preferences to your trip notes.</p>
                         {(<p className="brief-note">{trip_notes}</p>) if trip_notes else None}
                         <button type="button" className="text-button" disabled={busy} onClick={lambda {
                             trip_review = False; window.requestAnimationFrame(lambda { focusItineraryControl("trip-name"); });
                         }}>Edit brief</button>
                     </div>) if trip_review else None}
+                    {(<p className="section-caption">Save your changes before running AI planning. The assistant uses your saved trip budget.</p>) if editing_trip else None}
                     <button className="primary" type="submit" disabled={busy}>{"Saving…" if busy else "Save changes" if editing_trip else "Confirm and create trip" if trip_review else "Review trip brief ↗"}</button>
                 </form>
             </section>) if trip_form else None}
@@ -345,7 +385,7 @@ def:pub app -> JsxElement {
                         {"AI planner" if value == "planner" else "Itinerary" if value == "itinerary" else "Route" if value == "journey" else "Backup plans" if value == "backups" else "Replan" if value == "replan" else "Bookings" if value == "bookings" else "Packing list" if value == "packing" else "Budget"}
                     </button> for value in ["planner", "journey", "itinerary", "backups", "replan", "bookings", "packing", "budget"]
                 ]}</nav>
-                {(<RouteEditor key={selected} trip={current} data={journeyData} onSaved={routeSaved} onPlan={composeAI} disabled={busy or loading}/>) if tab in ["planner", "journey"] else None}
+                {(<RouteEditor key={selected} trip={current} data={journeyData} onSaved={routeSaved} onPlan={runAI} disabled={busy or aiWorking or loading}/>) if tab == "journey" else None}
                 <div id="itinerary-view-toolbar" className={"itinerary-view-toolbar" if tab == "itinerary" else ""}>
                     {(<div className="itinerary-view-controls" role="group" aria-label="Itinerary view">
                         <button type="button" id="itinerary-view-map" aria-pressed={itineraryView == "map"}
@@ -358,16 +398,16 @@ def:pub app -> JsxElement {
                         <span aria-hidden="true">↗</span> Review a change
                     </button>) if not reviewRequest and tab != "journey" else None}
                 </div>
-                {(<section className="backup-workspace" aria-label="Backup plans">
-                    <div className="card workflow-intro"><h2>Backup plans</h2>
-                        <p>Get alternatives for a risk such as rain or a late arrival. Compare their cost and timing, then accept one to update your itinerary.</p>
-                        <div className="planning-demo-actions"><button type="button" className="secondary" disabled={busy} onClick={lambda { createIntegratedDemo("rain"); }}>Load rain sample</button>
-                            <button type="button" className="secondary" disabled={busy} onClick={lambda { createIntegratedDemo("arrival_delay"); }}>Load late-arrival sample</button></div>
-                        <button type="button" className="text-button" onClick={lambda { chooseTab("replan"); }}>Replan after a disruption →</button>
-                    </div>
-                    <BackupPanel key={selected} trip={current} items={items} onApplied={backupApplied}/>
-                </section>) if not loading and tab == "backups" else None}
-                {(<AIPlanner data={aiData} currency={current.currency} onCompose={composeAI} onReview={reviewAI} onPrices={priceAI} onPreferences={savePreferences} busy={busy}/>) if tab == "planner" else None}
+                {(<div className="map-workspace">
+                    <TripMap key={selected} trip={current} items={itineraryItems} revision={mapRevision}
+                        journey={savedRoute} draft={mapDraft if tab in ["planner", "backups", "replan"] else None}
+                        working={aiWorking and aiMode in ["plan", "backup", "replan"]} day={day} onDay={lambda (value: str) { day = value; }}
+                        preview={itineraryPreview} disabled={busy or aiWorking or loading}
+                        onReview={openReview} onPlanB={openMapReview} onStop={jumpStop} onTimeline={jumpTimeline} onDraft={jumpDraft}
+                        onSample={lambda { createIntegratedDemo("map"); }}/>
+                </div>) if tab in ["planner", "backups", "replan"] or mapVisible else None}
+                {(<AITaskPanel key={selected + "-backup"} mode="backup" busy={busy or aiWorking or loading or trip_form} onRun={runAI}/>) if tab == "backups" else None}
+                {(<AIPlanner data={aiData if aiData.get("trip_id") == selected else {}} currency={current.currency} onCompose={composeAI} onReview={reviewAI} onPrices={priceAI} onPreferences={savePreferences} busy={busy or aiWorking or loading or trip_form} onRun={runAI}/>) if tab == "planner" else None}
                 {(<section className="budget-overview card"><div><h2>Budget summary</h2>
                     <p>All amounts are in {current.currency}. Mark items paid as you pay them.</p></div><div className="budget-numbers">
                     <p><span>Budget</span><strong>{money(current.budget_cents, current.currency) if current.budget_cents else "Not set"}</strong></p>
@@ -375,17 +415,11 @@ def:pub app -> JsxElement {
                     <p><span>Still to pay</span><strong>{money(total - paid, current.currency)}</strong></p>
                     {(<p className="over-budget">{"Over budget by " + money(total - current.budget_cents, current.currency)}</p>) if current.budget_cents and total > current.budget_cents else None}
                 </div></section>) if tab == "budget" else None}
-                {(<ReplanPanel key={selected} trip_id={selected} currency={current.currency} onApplied={refresh}/>) if tab == "replan" else None}
+                {(<AITaskPanel key={selected + "-replan"} mode="replan" busy={busy or aiWorking or loading or trip_form} onRun={runAI}/>) if tab == "replan" else None}
                 {(<GuidedDemo key={selected} trip={current} items={items} onRefresh={refresh}
                     onViewItinerary={lambda { chooseTab("itinerary"); }}/>) if tab == "demo" else None}
                 <div className="detail-grid" data-view={itineraryView if tab == "itinerary" else ""}
                     data-reviewing={bool(reviewRequest)} hidden={tab in ["planner", "journey", "backups", "replan", "demo"]}>
-                    {(<div className="map-workspace">
-                        <TripMap key={selected} trip={current} items={itineraryItems} revision={mapRevision}
-                            preview={itineraryPreview} disabled={busy or loading}
-                            onReview={openReview} onPlanB={openMapReview} onStop={jumpStop} onTimeline={jumpTimeline}
-                            onSample={lambda { createIntegratedDemo("map"); }}/>
-                    </div>) if mapVisible else None}
                     <div className="itinerary-main">
                         <section className="card plan-card">
                             <div className="section-heading"><div>
@@ -487,6 +521,6 @@ def:pub app -> JsxElement {
             <button type="button" className="itinerary-chip" aria-label="Dismiss saved revision message" onClick={lambda { revisionNotice = ""; }}>×</button>
         </div>) if revisionNotice else None}
         {(<ChatSidebar key={selected} trip_id={selected} destination={current.destination} onUpdate={receiveAI} reload={aiReload}
-            compose={aiCompose} composeMode={aiMode} composeText={aiText} externalBusy={busy}/>) if current else None}
+            compose={aiCompose if aiComposeTrip == selected else 0} composeMode={aiMode} composeText={aiText} externalBusy={busy or loading or trip_form} autoRun={aiAutoRun} onBusy={receiveAIBusy} tripTitle={current.title}/>) if current else None}
     </div>
 }

@@ -4,11 +4,15 @@ import json;
 import tempfile;
 import sqlite3;
 import unittest;
+import urllib.error;
+import ssl;
+import http.client;
 import from copy { deepcopy }
 import from uuid { uuid4 }
-import from unittest.mock { patch }
+import from unittest.mock { patch, MagicMock }
 import assistant.provider as provider;
 import server.main as service;
+import journey.fixtures as journey_fixtures;
 import from assistant.workflow { check_plan }
 
 def trip -> str {
@@ -134,7 +138,7 @@ test "provider request uses web search then strict planning output and keeps sou
         reply = provider.generate({"trip": {"destination": "Boston"}}, [], "Plan museums", "plan", True);
         assert len(reply["plans"]) == 1 and len(reply["sources"]) == 1;
         assert transport.call_args_list[0][0][0]["tools"] == [{"type": "web_search", "search_context_size": "low"}];
-        assert transport.call_args_list[0][0][0]["max_tool_calls"] == 3;
+        assert transport.call_args_list[0][0][0]["max_tool_calls"] == 2;
         assert transport.call_args_list[1][0][0]["text"]["format"]["strict"] is True;
         assert transport.call_args_list[0][0][0]["store"] is False;
     }
@@ -347,7 +351,7 @@ test "pet research is bounded and preserves uncertainty in the structured draft"
         reply = provider.generate({"planning_preferences": {"pet_friendly": True, "pace": "balanced"}}, [], "Plan a pet-friendly trip", "plan", True);
         assert transport.call_count == 2;
         lookup = transport.call_args_list[0][0][0]; draft = transport.call_args_list[1][0][0];
-        assert lookup["max_tool_calls"] == 3;
+        assert lookup["max_tool_calls"] == 2;
         assert "Do not write a full itinerary" in lookup["instructions"];
         assert "Mark remaining policies as unverified" in draft["instructions"];
         assert "other policies remain unverified" in draft["input"];
@@ -374,8 +378,8 @@ test "fast model effort reaches chat drafts and repair while Sol overrides stay 
 
 test "personal keys reach research structured drafts and repair without entering prompts" {
     key = "sk-test-personal-key";
-    research = {"output": [{"type": "message", "content": [{"type": "output_text", "text": "Museum research"}]}]};
-    structured = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+    research = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "Museum research"}]}]};
+    structured = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
     with patch.object(provider, "request", side_effect=[research, structured, structured]) as transport {
         draft = provider.generate({}, [], "Plan", "plan", True, key);
         provider.repair({}, draft, ["Overlap"], key);
@@ -431,9 +435,10 @@ test "invalid key input is rejected before a network request" {
 test "saved route endpoints reach the assistant and changing them makes drafts stale" {
     with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
         id = trip();
-        service.save_trip("AI test", "Boston", "2027-01-01", "2027-01-03", "USD", "500", trip_id=id,
+        service.save_trip("AI test", "Tokyo", "2027-01-01", "2027-01-07", "USD", "8000", trip_id=id,
             departure_location="Detroit", return_location="Chicago");
-        with patch.object(provider, "generate", return_value=result()) as model {
+        proposal = journey_fixtures.plan(); proposal["journey"]["return_to"].update({"city": "Chicago", "zone": "America/Chicago"});
+        with patch.object(provider, "generate", return_value={"answer": "Review this trip.", "plans": [proposal]}) as model {
             state = service.assistant_chat(id, "Plan a museum visit", "plan", False, str(uuid4()));
             supplied = model.call_args[0][0]["trip"];
             assert supplied["departure_location"] == "Detroit" and supplied["return_location"] == "Chicago";
@@ -442,5 +447,298 @@ test "saved route endpoints reach the assistant and changing them makes drafts s
         check = unittest.TestCase();
         with check.assertRaises(ValueError) { service.assistant_review(id, state["drafts"][0]["id"], True, True); }
         assert service.list_items(id) == [];
+    }
+}
+
+test "automatic actions hide internal prompts across reloads and retain reviewed drafts" {
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
+        id = trip(); token = str(uuid4()); prompt = "Internal quick action request";
+        with patch.object(provider, "generate", return_value=result()) as model {
+            state = service.assistant_chat(id, prompt, "plan", False, token, automatic=True);
+            assert model.call_args[0][0]["automatic_action"] is True;
+            assert len(state["messages"]) == 1 and state["messages"][0]["role"] == "assistant";
+            assert len(state["drafts"]) == 1 and service.list_items(id) == [];
+            assert service.assistant_state(id)["messages"] == state["messages"];
+            replay = service.assistant_chat(id, prompt, "plan", False, token, automatic=True);
+            assert model.call_count == 1 and replay["messages"] == state["messages"];
+            check = unittest.TestCase();
+            with check.assertRaises(ValueError) { service.assistant_chat(id, prompt, "plan", False, token); }
+        }
+        manual = send(id, result());
+        assert manual["messages"][-2]["role"] == "user";
+        assert len([message for message in manual["messages"] if message["text"] == prompt]) == 0;
+    }
+}
+
+
+test "automatic actions do not ask questions" {
+    context = {"automatic_action": True};
+    research = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "Research notes"}]}]};
+    structured = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+    with patch.object(provider, "request", side_effect=[research, structured, structured]) as transport {
+        reply = provider.generate(context, [], "Internal quick action request", "plan", True);
+        provider.repair(context, reply, ["Overlap"]);
+        assert transport.call_count == 3;
+        for call in transport.call_args_list {
+            assert "Do not ask the traveler any follow-up or clarification questions" in call[0][0]["instructions"];
+        }
+    }
+}
+
+
+test "AI buttons use edited budgets and exclude stale drafts without restoring old limits" {
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
+        id = trip(); old = send(id, result())["drafts"][0];
+        service.save_trip("AI test", "Boston", "2027-01-01", "2027-01-03", "USD", "75", trip_id=id);
+        stale_budget = result([change(cost=8000)]);
+        stale_budget["plans"][0]["trip_changes"] = {"budget_cents": 50000};
+        for mode in ["plan", "backup", "replan"] {
+            with patch.object(provider, "generate", return_value=stale_budget) as model, patch.object(provider, "repair", return_value=result([change(cost=5000)])) as repair {
+                state = service.assistant_chat(id, "Use my saved preferences", mode, False, str(uuid4()), automatic=True);
+                context = model.call_args[0][0];
+                assert context["trip"]["budget_cents"] == 7500 and context["recent_drafts"] == [];
+                assert repair.call_count == 1 and repair.call_args[0][0]["trip"]["budget_cents"] == 7500;
+                assert "latest saved trip budget" in repair.call_args[0][2][0];
+                draft = state["drafts"][0];
+                assert draft["total_cents"] == 5000 and draft["trip_after"]["budget_cents"] == 7500;
+                assert draft["trip_changes"] == {} and draft["preserve_budget"];
+                service.assistant_review(id, draft["id"], False, False);
+            }
+        }
+        assert [draft for draft in state["drafts"] if draft["id"] == old["id"]][0]["status"] == "stale";
+        service.save_trip("AI test", "Boston", "2027-01-01", "2027-01-03", "USD", "900", trip_id=id);
+        with patch.object(provider, "generate", return_value=result([change(cost=60000)])) as model, patch.object(provider, "repair") as repair {
+            state = service.assistant_chat(id, "Plan using my saved budget", "plan", False, str(uuid4()), automatic=True);
+            assert model.call_args[0][0]["trip"]["budget_cents"] == 90000 and repair.call_count == 0;
+            draft = state["drafts"][0]; assert draft["total_cents"] == 60000 and draft["can_apply"];
+        }
+        service.assistant_review(id, draft["id"], True, True);
+        assert service.assistant_state(id)["drafts"][0]["status"] == "accepted";
+        assert service.list_trips()[0].budget_cents == 90000;
+    }
+}
+
+test "current budget overrides historical budgets in research generation and repair" {
+    context = {"trip": {"budget_cents": 7500, "currency": "USD"}, "automatic_action": True};
+    history = [{"role": "user", "text": "My original budget was USD 500"}];
+    research = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "Old budget USD 500"}]}]};
+    structured = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+    with patch.object(provider, "request", side_effect=[research, structured, structured]) as transport {
+        reply = provider.generate(context, history, "Plan my trip", "plan", True);
+        provider.repair(context, reply, ["Budget exceeded"]);
+        for call in transport.call_args_list {
+            instructions = call[0][0]["instructions"];
+            assert "Current saved trip budget: USD 75.00 (budget_cents=7500)" in instructions;
+            assert "instead of older budgets" in instructions and "Keep trip_changes.budget_cents and trip_changes.currency null" in instructions;
+        }
+    }
+}
+
+
+test "truncated planning responses recover automatically without saving partial drafts" {
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
+        id = trip(); key = "sk-test-recovery-key";
+        incomplete = {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "{unfinished"}]}]};
+        complete = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+        with patch.object(provider.urllib.request, "urlopen") as transport {
+            transport.return_value.__enter__.return_value.read.side_effect = [json.dumps(incomplete).encode(), json.dumps(complete).encode()];
+            state = service.assistant_chat(id, "Plan my trip", "plan", False, str(uuid4()), key, automatic=True);
+            assert transport.call_count == 2;
+            first = json.loads(transport.call_args_list[0].args[0].data);
+            retry = json.loads(transport.call_args_list[1].args[0].data);
+            assert first["max_output_tokens"] == 11000 and retry["max_output_tokens"] == 22000;
+            assert first["input"] == retry["input"] and first["text"] == retry["text"];
+            assert "Preserve all requested trip days" in retry["instructions"];
+            assert "Current saved trip budget: USD 500.00" in retry["instructions"];
+            for call in transport.call_args_list {
+                assert call.args[0].get_header("Authorization") == "Bearer " + key;
+                assert key not in call.args[0].data.decode();
+            }
+        }
+        assert len(state["drafts"]) == 1 and len(state["messages"]) == 1;
+        assert service.list_items(id) == [];
+    }
+}
+
+test "output recovery is bounded and other incomplete reasons are not retried" {
+    check = unittest.TestCase(); key = "sk-test-recovery-key";
+    for (status, reason, expected, calls) in [("incomplete", "max_output_tokens", "output limit", 2),
+        ("incomplete", "content_filter", "content filter", 1), ("incomplete", "max_messages", "tool-message limit", 1), ("failed", "", "failed to generate", 1),
+        ("incomplete", "unknown", "did not complete", 1)] {
+        response = {"status": status, "incomplete_details": {"reason": reason}};
+        with patch.object(provider.urllib.request, "urlopen") as transport {
+            transport.return_value.__enter__.return_value.read.return_value = json.dumps(response).encode();
+            with check.assertRaisesRegex(RuntimeError, expected) {
+                provider.request({"max_output_tokens": 2600, "instructions": "Keep current budget", "input": "Plan"}, key);
+            }
+            assert transport.call_count == calls;
+        }
+    }
+}
+
+
+test "exhausted recovery leaves no partial state and the next button request can succeed" {
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
+        id = trip(); check = unittest.TestCase();
+        incomplete = {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}};
+        with patch.object(provider.urllib.request, "urlopen") as transport {
+            transport.return_value.__enter__.return_value.read.return_value = json.dumps(incomplete).encode();
+            with check.assertRaisesRegex(RuntimeError, "output limit") {
+                service.assistant_chat(id, "Plan my trip", "plan", False, str(uuid4()), "sk-test-retry", automatic=True);
+            }
+            assert transport.call_count == 2;
+        }
+        state = service.assistant_state(id);
+        assert not state["pending"] and state["drafts"] == [] and state["messages"] == [];
+        assert service.list_items(id) == [];
+        with patch.object(provider, "generate", return_value=result()) {
+            state = service.assistant_chat(id, "Plan my trip", "plan", False, str(uuid4()), automatic=True);
+        }
+        assert len(state["drafts"]) == 1 and not state["pending"];
+    }
+}
+
+
+test "fast drafts use one model call and limit generated options without losing constraints" {
+    structured = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+    context = {"automatic_action": True, "trip": {"budget_cents": 7500, "currency": "USD"},
+        "planning_preferences": {"pet_friendly": True, "pace": "relax"},
+        "items": [{"id": "locked-booking", "locked": True, "cost_cents": 1000}],
+        "dependencies": [{"from_id": "locked-booking", "to_id": "dinner"}]};
+    for (mode, limit) in [("plan", 1), ("backup", 1), ("replan", 1)] {
+        with patch.object(provider, "request", return_value=structured) as transport {
+            reply = provider.generate(context, [], "Use my saved trip", mode, False);
+            assert transport.call_count == 1 and reply["sources"] == [];
+            body = transport.call_args.args[0];
+            assert "tools" not in body;
+            assert body["text"]["format"]["schema"]["properties"]["plans"]["maxItems"] == limit;
+            assert "USD 75.00" in body["instructions"] and "Pet-friendly is ON" in body["instructions"];
+            assert "Do not ask the traveler any follow-up" in body["instructions"];
+            assert "locked-booking" in body["input"] and "dependencies" in body["input"];
+            assert "answer one sentence" in body["input"] and "Schedule every requested day" in body["input"];
+            provider.repair(context, {**reply, "mode": mode}, ["Schedule overlap"]);
+            repaired = transport.call_args.args[0];
+            assert repaired["text"]["format"]["schema"]["properties"]["plans"]["maxItems"] == limit;
+        }
+    }
+}
+
+
+test "each trip has a fresh conversation and receives only its own model history" {
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
+        first = trip(); second = trip();
+        with patch.object(provider, "generate", return_value={"answer": "First trip reply", "plans": []}) {
+            service.assistant_chat(first, "First trip only: museums", "ask", False, str(uuid4()));
+        }
+        assert service.assistant_state(second)["messages"] == [];
+        with patch.object(provider, "generate", return_value={"answer": "Second trip reply", "plans": []}) as model {
+            state = service.assistant_chat(second, "Second trip only: beaches", "ask", False, str(uuid4()));
+            assert model.call_args.args[1] == [] and model.call_args.args[0]["trip"]["id"] == second;
+        }
+        assert state["trip_id"] == second and len(state["messages"]) == 2;
+        with patch.object(provider, "generate", return_value={"answer": "First trip again", "plans": []}) as model {
+            service.assistant_chat(first, "Continue this trip", "ask", False, str(uuid4()));
+            assert [message["text"] for message in model.call_args.args[1]] == ["First trip only: museums", "First trip reply"];
+        }
+        assert len(service.assistant_state(second)["messages"]) == 2;
+    }
+}
+
+
+test "single-city backup and replan retain saved bookings when optional edits cannot fit" {
+    for mode in ["backup", "replan"] {
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TRAVEL_DB_PATH": os.path.join(directory, "trip.sqlite3")}) {
+            id = trip(); meal = service.save_item(id, "Saved meal", "food", "2027-01-01", "10:00", cost="20");
+            fixed = service.save_item(id, "Fixed arrangement", "activity", "2027-01-01", "12:00", cost="10");
+            service.replan_save_rules(id, fixed.id, 60, "", True);
+            edit = {**change(meal.id, 2000), "title": "Saved meal", "category": "food", "time": "11:00", "duration_minutes": 1440};
+            addition = {**change(), "title": "Optional visit", "time": "14:00"};
+            response = result([edit, addition]);
+            with patch.object(provider, "generate", return_value=response), patch.object(provider, "repair") as repair {
+                state = service.assistant_chat(id, "Prepare an option", mode, False, str(uuid4()), automatic=True);
+                assert repair.call_count == 0;
+            }
+            draft = state["drafts"][0];
+            assert len(draft["changes"]) == 1 and len(draft["omitted_items"]) == 1 and draft["can_apply"];
+            assert draft["changes"][0]["after"]["title"] == "Optional visit";
+            service.assistant_review(id, draft["id"], True, True);
+            assert next(item for item in service.list_items(id) if item.id == meal.id).time == "10:00";
+            assert next(item for item in service.list_items(id) if item.id == fixed.id).time == "12:00";
+        }
+    }
+}
+
+
+test "temporary AI connection failures retry once without changing the request" {
+    failures = [TimeoutError("read timed out"), urllib.error.URLError("connection reset"),
+        urllib.error.URLError(TimeoutError("read timed out")), http.client.IncompleteRead(b"partial")];
+    for failure in failures {
+        completed = MagicMock(); completed.__enter__.return_value.read.return_value = b'{"status":"completed"}';
+        body = {"input": "Plan my trip", "instructions": "Keep the budget", "max_output_tokens": 11000};
+        before = deepcopy(body);
+        with patch.object(provider.urllib.request, "urlopen", side_effect=[failure, completed]) as transport, patch.object(provider.time, "sleep") {
+            reply = provider.request(body, "sk-test-network-key");
+            assert reply["status"] == "completed" and transport.call_count == 2;
+            assert transport.call_args_list[0].args[0].data == transport.call_args_list[1].args[0].data;
+            assert body == before;
+        }
+    }
+}
+
+test "repeated AI failures have short messages and no endless retries" {
+    check = unittest.TestCase();
+    for (failure, message, attempts) in [(TimeoutError("timed out"), "AI took too long", 2),
+        (urllib.error.URLError("connection reset"), "AI connection failed", 2),
+        (urllib.error.URLError(ssl.SSLCertVerificationError("certificate verification failed")), "Secure AI connection failed", 1)] {
+        with patch.object(provider.urllib.request, "urlopen", side_effect=failure) as transport, patch.object(provider.time, "sleep") {
+            with check.assertRaisesRegex(RuntimeError, message) { provider.request({"input": "Plan"}, "sk-test-network-key"); }
+            assert transport.call_count == attempts;
+        }
+    }
+}
+
+test "unreadable AI response retries and auth failures never retry" {
+    check = unittest.TestCase();
+    with patch.object(provider.urllib.request, "urlopen") as transport, patch.object(provider.time, "sleep") {
+        transport.return_value.__enter__.return_value.read.side_effect = [b'broken JSON', b'{"status":"completed"}'];
+        assert provider.request({"input": "Plan"}, "sk-test-network-key")["status"] == "completed";
+        assert transport.call_count == 2;
+    }
+    for (code, attempts) in [(401, 1), (403, 1), (400, 1), (429, 1), (503, 2)] {
+        failure = urllib.error.HTTPError("https://api.openai.com/v1/responses", code, "Rejected", {}, None);
+        with patch.object(provider.urllib.request, "urlopen", side_effect=failure) as transport, patch.object(provider.time, "sleep") {
+            with check.assertRaises(RuntimeError) { provider.request({"input": "Plan"}, "sk-test-network-key"); }
+            assert transport.call_count == attempts;
+        }
+    }
+}
+
+test "automatic backup requests are one short targeted option without repeating assistant prose" {
+    structured = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+    history = [{"role": "user", "text": "Keep vegetarian meals and my hotel."}, {"role": "assistant", "text": "Old detailed answer " * 500}];
+    with patch.object(provider, "request", return_value=structured) as transport {
+        provider.generate({"automatic_action": True}, history, "Suggest one backup.", "backup", False);
+        body = transport.call_args.args[0];
+        assert transport.call_count == 1 and body["text"]["format"]["schema"]["properties"]["plans"]["maxItems"] == 1;
+        assert "targeted backup" in body["input"] and "Return one focused option" in body["input"];
+        assert "Keep vegetarian meals and my hotel." in body["input"];
+        assert history[1]["text"] not in body["input"];
+    }
+}
+
+
+test "AI flight planning requires a route object while keeping the request concise" {
+    structured = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result())}]}]};
+    context = {"automatic_action": True, "trip": {"departure_location": "Detroit", "return_location": "Chicago"}};
+    with patch.object(provider, "request", return_value=structured) as transport {
+        reply = provider.generate(context, [], "Plan my trip with flights", "plan", False);
+        body = transport.call_args.args[0];
+        assert body["text"]["format"]["schema"]["properties"]["plans"]["items"]["properties"]["journey"]["type"] == "object";
+        assert "outbound flight" in body["instructions"] and "return flight" in body["instructions"];
+        assert "Use saved departure and return names exactly" in body["instructions"];
+        assert transport.call_count == 1;
+        provider.repair(context, reply, ["Missing flight"]);
+        assert transport.call_args.args[0]["text"]["format"]["schema"]["properties"]["plans"]["items"]["properties"]["journey"]["type"] == "object";
     }
 }

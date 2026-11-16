@@ -94,6 +94,27 @@ def normalize(raw: any, trip: dict[str, any]) -> dict[str, any] {
     return {"version": 1, "origin": origin, "stops": stops, "return_to": returning, "legs": legs};
 }
 
+def require_trip_travel(journey: any, trip: dict[str, any], saved: any = None) -> None {
+    if not trip.get("departure_location") { return; }
+    if journey is None {
+        raise ValueError("Include an outbound flight from the saved departure location, the destination route, and a return flight when a return location is set. Required flights cannot be omitted.");
+    }
+    returning = journey["return_to"]["city"] if journey["return_to"] else "";
+    if journey["origin"]["city"] != trip["departure_location"] or returning != trip.get("return_location", "") {
+        raise ValueError("Keep the saved departure and return locations exactly; do not omit the return leg or substitute another city.");
+    }
+    for endpoint in ["origin", "return"] {
+        if endpoint == "return" and not trip.get("return_location") { continue; }
+        field = "from_id" if endpoint == "origin" else "to_id";
+        legs = [leg for leg in journey["legs"] if leg[field] == endpoint];
+        previous = [leg for leg in saved["legs"] if leg[field] == endpoint] if saved else [];
+        mode = previous[0]["mode"] if previous else "flight";
+        if not legs or legs[0]["mode"] != mode {
+            raise ValueError("Include the " + ("outbound" if endpoint == "origin" else "return") + " " + mode + " leg. Keep required departure and return travel in the trip.");
+        }
+    }
+}
+
 def places(journey: dict[str, any]) -> dict[str, any] {
     result = {stop["id"]: stop for stop in journey["stops"]};
     result["origin"] = journey["origin"];
@@ -117,6 +138,22 @@ def local_time(value: datetime, zone: str) -> datetime {
     return value.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(zone)).replace(tzinfo=None);
 }
 
+def transport_duration(item: dict[str, any], raw: dict[str, any], journey: dict[str, any]) -> int {
+    matches = [leg for leg in journey["legs"] if leg["id"] == raw.get("leg_id")];
+    if item["category"] != "transport" or not matches { raise ValueError("Only transport items can cover a saved intercity leg."); }
+    leg = matches[0]; lookup = places(journey);
+    start_zone = lookup[leg["from_id"]]["zone"]; end_zone = lookup[leg["to_id"]]["zone"];
+    arrival_date = checked_date(raw.get("arrival_date")); arrival_time = raw.get("arrival_time");
+    if not isinstance(arrival_time, str) { raise ValueError("Provide the arrival time at the destination."); }
+    first = instant(item["date"] + "T" + item["time"], start_zone);
+    last = instant(arrival_date + "T" + arrival_time, end_zone);
+    duration = int((last - first).total_seconds() / 60);
+    if not 1 <= duration <= 1440 {
+        raise ValueError(item["title"] + ": arrival must be after departure and within 24 hours after converting " + start_zone + " to " + end_zone + ". Check the local dates, times and time zones.");
+    }
+    return duration;
+}
+
 def bind(item: dict[str, any], raw: dict[str, any], journey: dict[str, any]) -> dict[str, any] {
     stop_id = raw.get("stop_id", ""); leg_id = raw.get("leg_id", ""); lookup = places(journey);
     if not isinstance(stop_id, str) or not isinstance(leg_id, str) or bool(stop_id) == bool(leg_id) {
@@ -131,7 +168,9 @@ def bind(item: dict[str, any], raw: dict[str, any], journey: dict[str, any]) -> 
         first = instant(item["date"] + "T" + item["time"], start_zone);
         last = instant(arrival_date + "T" + arrival_time, end_zone);
         duration = int((last - first).total_seconds() / 60);
-        if not 1 <= duration <= 1440 or duration != item["duration_minutes"] { raise ValueError("Transport duration must match its departure and arrival instants (up to 24 hours per leg)."); }
+        if not 1 <= duration <= 1440 or duration != item["duration_minutes"] {
+            raise ValueError(item["title"] + ": the local departure and arrival times in " + start_zone + " and " + end_zone + " imply " + str(duration) + " minutes, but the stated duration is " + str(item["duration_minutes"]) + ". Travel must take 1–1440 elapsed minutes; check dates and time zones.");
+        }
     } else {
         if stop_id not in {s["id"] for s in journey["stops"]} { raise ValueError("Unknown destination city for " + item["title"] + "."); }
         start_zone = lookup[stop_id]["zone"]; end_zone = start_zone;
@@ -191,8 +230,8 @@ def validate(journey: dict[str, any], trip: dict[str, any], items: list[dict[str
         }
         previous_end = last + timedelta(minutes=leg["after_minutes"]);
         for (stop_id, visit_start, visit_end, title) in visits {
-            if stop_id == leg["to_id"] and visit_start < previous_end { raise ValueError(title + " starts before arrival and the transfer buffer."); }
-            if stop_id == leg["from_id"] and visit_end > first - timedelta(minutes=leg["before_minutes"]) { raise ValueError(title + " leaves too little time before the next city transfer."); }
+            if stop_id == leg["to_id"] and visit_start < previous_end { raise ValueError(title + " starts before arrival and the transfer buffer. Start no earlier than " + local_time(previous_end, lookup[stop_id]["zone"]).isoformat(timespec="minutes") + " " + lookup[stop_id]["zone"] + "."); }
+            if stop_id == leg["from_id"] and visit_end > first - timedelta(minutes=leg["before_minutes"]) { raise ValueError(title + " leaves too little time before the next city transfer. Finish by " + local_time(first - timedelta(minutes=leg["before_minutes"]), lookup[stop_id]["zone"]).isoformat(timespec="minutes") + " " + lookup[stop_id]["zone"] + " to preserve the " + str(leg["before_minutes"]) + "-minute departure buffer."); }
         }
     }
     if complete and issues { raise ValueError("Complete the journey: " + "; ".join(issues)); }

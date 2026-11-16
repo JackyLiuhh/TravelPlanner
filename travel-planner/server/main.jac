@@ -3,6 +3,7 @@ import os;
 import re;
 import uuid;
 import sqlite3;
+import tools.flight_details as flight_details;
 import datetime;
 import json;
 import from decimal { Decimal }
@@ -23,6 +24,7 @@ import from planning.engine { at_time, generate_plans, VALIDATION_VERSION }
 import from planning.fixtures { sample_state }
 import from itinerary.place_data { read_place_details, write_place_details }
 import from itinerary.map_data { install_map_schema, save_map_route, map_points, current_map_plans }
+import from itinerary.map_locations { location_points }
 import assistant.workflow as ai_workflow;
 import assistant.provider as ai_provider;
 import assistant.preferences as ai_preferences;
@@ -72,24 +74,44 @@ def:pub assistant_state(trip_id: str) -> dict[str, any] {
     finally { conn.close(); }
 }
 
-def:pub assistant_chat(trip_id: str, message: str, mode: str, search: any, request_id: str, api_key: str = "") -> dict[str, any] {
+def:pub assistant_chat(trip_id: str, message: str, mode: str, search: any, request_id: str, api_key: str = "", automatic: bool = False, flight_search: bool = True, draft_only: bool = False) -> dict[str, any] {
     api_key = ai_provider.validate_key(api_key);
     conn = _connect();
-    try { captured = ai_workflow.begin(conn, trip_id, request_id, message, mode, search); }
+    try { captured = ai_workflow.begin(conn, trip_id, request_id, message, mode, search, automatic, flight_search, draft_only); }
     except Exception { conn.rollback(); raise; }
     finally { conn.close(); }
     if captured["replay"] { return assistant_state(trip_id); }
     try {
-        result = ai_provider.generate(captured["context"], captured["history"], message, mode, search, api_key);
-        failures: list[str] = [];
-        if result.get("plans", []) {
-            for plan in result.get("plans", []) {
-                try {
-                    checked = ai_workflow.check_plan(captured["state"], captured["facts"], plan);
-                    if not checked["can_apply"] { failures.append("Every item needs a realistic numeric planning estimate; some prices are missing."); }
-                } except (ValueError, KeyError, TypeError) as error { failures.append(str(error)); }
+        simple_draft = draft_only and mode in ["plan", "backup", "replan"];
+        try { result = ai_provider.generate(captured["context"], captured["history"], message, mode, search, api_key); }
+        except Exception {
+            if not simple_draft { raise; }
+            result = {"answer": "", "plans": []};
+        }
+        failures: list[str] = []; valid_plans = []; invalid_plans = [];
+        for plan in ([] if simple_draft else result.get("plans", [])) {
+            try {
+                checked = ai_workflow.check_plan(captured["state"], captured["facts"], plan, automatic, True, mode in ["plan", "backup", "replan"], result.get("sources", []), draft_only);
+                if checked["can_apply"] or draft_only { valid_plans.append(plan); }
+                else {
+                    invalid_plans.append(plan);
+                    failures.append("Every item needs a realistic numeric planning estimate; some prices are missing.");
+                }
+            } except (ValueError, KeyError, TypeError) as error {
+                invalid_plans.append(plan); failures.append(str(error));
             }
-            if failures { result = ai_provider.repair(captured["context"], result, failures, api_key); }
+        }
+        if failures {
+            try {
+                repaired = ai_provider.repair(captured["context"], {**result, "plans": invalid_plans}, failures, api_key);
+                result = {**repaired, "plans": (valid_plans + repaired.get("plans", []))[:2 if mode == "backup" else 1]};
+                if valid_plans and not repaired.get("plans", []) {
+                    result["skipped_options"] = ["The remaining option could not be completed."];
+                }
+            } except Exception {
+                if not valid_plans { raise; }
+                result = {**result, "plans": valid_plans, "skipped_options": ["The remaining option could not be completed; kept the validated alternatives."]};
+            }
         }
         conn = _connect();
         try { return ai_workflow.finish(conn, trip_id, request_id, message, mode, captured, result); }
@@ -312,7 +334,7 @@ def:pub save_place_details(trip_id: str, item_id: str, location: str,
     finally { conn.close(); }
 }
 
-def:pub load_trip_map(trip_id: str) -> dict[str, any] {
+def:pub load_trip_map(trip_id: str, preview_journey: any = None) -> dict[str, any] {
     conn = _connect();
     try {
         conn.execute("BEGIN");
@@ -320,7 +342,8 @@ def:pub load_trip_map(trip_id: str) -> dict[str, any] {
         now = clock();
         context = build_context(state, read_facts(conn, trip_id), now);
         (pins, routes) = map_points(conn, trip_id);
-        return {"trip_version": state["version"], "pins": pins, "routes": routes, "journey": state["journey"],
+        return {"trip_version": state["version"], "pins": pins, "routes": routes, "journey": state["journey"], "flights": flight_details.read_for_items(conn, state["items"]),
+            "location_points": {**location_points(state["trip"], state["journey"]), **location_points(state["trip"], preview_journey)},
             "dependencies": state["dependencies"], "risks": [risk for risk in context["risks"] if risk["node_ids"]],
             "plans": current_map_plans(conn, trip_id, state["version"], VALIDATION_VERSION, now)};
     } finally { conn.close(); }

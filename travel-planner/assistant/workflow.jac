@@ -11,6 +11,10 @@ import from replan.engine { snapshot, validate }
 import from planning.context { read_facts }
 import from assistant.provider { configuration }
 import assistant.preferences as preferences;
+import assistant.schedule as schedule;
+import assistant.draft_route as draft_route;
+import assistant.fallback as fallback_planner;
+import tools.flight_details as flight_details;
 
 def now -> str { return datetime.now(timezone.utc).isoformat(); }
 
@@ -31,6 +35,7 @@ def install(conn: any) -> None {
         CREATE INDEX IF NOT EXISTS assistant_drafts_trip ON assistant_drafts(trip_id);
     """);
     preferences.install(conn);
+    flight_details.install(conn);
 }
 
 def planning_facts(conn: any, trip_id: str) -> dict[str, any] {
@@ -62,21 +67,24 @@ def read(conn: any, trip_id: str) -> dict[str, any] {
         drafts.append(draft);
     }
     pending = conn.execute("SELECT count(*) FROM assistant_requests WHERE trip_id=? AND status='pending' AND created>?",
-        (trip_id, (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat())).fetchone()[0];
-    return {"config": configuration(), "messages": messages, "drafts": drafts, "preferences": facts["trip_preferences"],
+        (trip_id, (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat())).fetchone()[0];
+    return {"trip_id": trip_id, "config": configuration(), "messages": messages, "drafts": drafts, "preferences": facts["trip_preferences"],
         "trip_version": state["version"], "pending": bool(pending), "checked_at": now()};
 }
 
-def begin(conn: any, trip_id: str, request_id: str, message: str, mode: str, search: bool) -> dict[str, any] {
+def begin(conn: any, trip_id: str, request_id: str, message: str, mode: str, search: bool, automatic: bool = False, flight_search: bool = True, draft_only: bool = False) -> dict[str, any] {
     if not isinstance(message, str) or not message.strip() or len(message) > 4000 { raise ValueError("Enter a message of 1–4000 characters."); }
     if mode not in ["ask", "plan", "backup", "replan", "edit"] { raise ValueError("Choose a supported planning mode."); }
+    if type(draft_only) is not bool { raise ValueError("Draft mode must be true or false."); }
+    if type(flight_search) is not bool { raise ValueError("Flight search must be true or false."); }
+    if type(automatic) is not bool { raise ValueError("Automatic action must be true or false."); }
     if type(search) is not bool { raise ValueError("Web search must be true or false."); }
     try { valid_id = str(UUID(request_id)); }
     except (ValueError, TypeError, AttributeError) { raise ValueError("Invalid request ID. Reload and retry.") from None; }
     if valid_id != request_id { raise ValueError("Invalid request ID. Reload and retry."); }
     conn.execute("BEGIN IMMEDIATE");
     state = snapshot(conn, trip_id); facts = planning_facts(conn, trip_id);
-    signature = hashlib.sha256(json.dumps([trip_id, message, mode, search]).encode()).hexdigest();
+    signature = hashlib.sha256(json.dumps([trip_id, message, mode, search, automatic, flight_search, draft_only]).encode()).hexdigest();
     prior = conn.execute("SELECT * FROM assistant_requests WHERE id=?", (request_id,)).fetchone();
     if prior {
         if prior["trip_id"] != trip_id or prior["signature"] != signature { raise ValueError("Request ID was already used for a different message."); }
@@ -84,7 +92,7 @@ def begin(conn: any, trip_id: str, request_id: str, message: str, mode: str, sea
         raise ValueError("This request is already running or failed. Wait, then send a new message to retry.");
     }
     pending = conn.execute("SELECT id FROM assistant_requests WHERE trip_id=? AND status='pending' AND created>?",
-        (trip_id, (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat())).fetchone();
+        (trip_id, (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat())).fetchone();
     if pending { raise ValueError("Another message for this trip is still running. Please wait."); }
     history = read(conn, trip_id)["messages"];
     conn.execute("INSERT INTO assistant_requests VALUES (?,?,?,?,?)", (request_id, trip_id, signature, "pending", now()));
@@ -96,9 +104,21 @@ def begin(conn: any, trip_id: str, request_id: str, message: str, mode: str, sea
         item.pop("reference", None);
     }
     context["traveler_facts"] = facts; context["current_time_utc"] = now();
+    context["automatic_action"] = automatic;
+    context["search_flights"] = flight_search;
+    context["draft_only"] = draft_only;
     context["planning_preferences"] = facts["trip_preferences"];
+    context["reported_changes"] = [];
+    for row in conn.execute("SELECT payload FROM disruption_events WHERE trip_id=? AND status='pending' ORDER BY rowid DESC LIMIT 5", (trip_id,)) {
+        try { event = json.loads(row["payload"]); }
+        except (ValueError, TypeError) { continue; }
+        if isinstance(event, dict) {
+            context["reported_changes"].append({key: event[key] for key in ["id", "item_id", "type", "delay_minutes", "source", "observed_at"] if key in event});
+        }
+    }
+    context["flight_listings"] = flight_details.read_for_items(conn, state["items"]);
     context["recent_drafts"] = [];
-    for row in conn.execute("SELECT payload FROM assistant_drafts WHERE trip_id=? AND status='pending' ORDER BY rowid DESC LIMIT 2", (trip_id,)) {
+    for row in conn.execute("SELECT payload FROM assistant_drafts WHERE trip_id=? AND status='pending' AND fingerprint=? AND expires>? ORDER BY rowid DESC LIMIT 2", (trip_id, fingerprint(state, facts), now())) {
         draft = json.loads(row["payload"]); proposed = [];
         for change in draft["changes"] {
             item = copy.deepcopy(change["after"]); item.pop("reference", None);
@@ -108,7 +128,7 @@ def begin(conn: any, trip_id: str, request_id: str, message: str, mode: str, sea
         context["recent_drafts"].append({"title": draft["title"], "summary": draft["summary"], "changes": proposed, "trip_changes": draft.get("trip_changes", {}), "journey": draft.get("journey")});
     }
     return {"replay": False, "state": state, "facts": facts, "context": context,
-        "history": history, "fingerprint": fingerprint(state, facts)};
+        "automatic": automatic, "history": history, "fingerprint": fingerprint(state, facts)};
 }
 
 def trip_patch(state: dict[str, any], facts: dict[str, any], patch: any) -> dict[str, any] {
@@ -139,12 +159,30 @@ def trip_patch(state: dict[str, any], facts: dict[str, any], patch: any) -> dict
     return after;
 }
 
-def check_plan(state: dict[str, any], facts: dict[str, any], plan: dict[str, any]) -> dict[str, any] {
+def check_plan(state: dict[str, any], facts: dict[str, any], plan: dict[str, any], preserve_budget: bool = False, calculate_transport: bool = False, require_travel: bool = False, flight_sources: list[dict[str, any]] | None = None, relaxed: bool = False) -> dict[str, any] {
     if not isinstance(plan, dict) or not isinstance(plan.get("changes"), list) or len(plan["changes"]) > 40 {
         raise ValueError("A plan can have at most 40 itinerary changes.");
     }
+    if not preserve_budget and not plan["changes"] and plan.get("journey") is None and plan.get("trip_changes") { require_travel = False; }
     after_trip = trip_patch(state, facts, plan.get("trip_changes", {}));
-    journey = journey_model.normalize(plan["journey"], after_trip) if plan.get("journey") is not None else state.get("journey");
+    if preserve_budget and any(after_trip[key] != state["trip"][key] for key in ["budget_cents", "currency"]) {
+        raise ValueError("Use the latest saved trip budget and currency. Automatic planning cannot change them; adjust the itinerary to fit instead.");
+    }
+    route = copy.deepcopy(plan.get("journey")) if plan.get("journey") is not None else copy.deepcopy(state.get("journey"));
+    if relaxed { route = draft_route.repair(route, state["trip"] if preserve_budget else after_trip, state.get("journey")); }
+    if relaxed and isinstance(route, dict) {
+        labels = state["trip"] if preserve_budget else after_trip;
+        if labels.get("departure_location") and isinstance(route.get("origin"), dict) { route["origin"]["city"] = labels["departure_location"]; }
+        if labels.get("return_location") and isinstance(route.get("return_to"), dict) { route["return_to"]["city"] = labels["return_location"]; }
+    }
+    journey = journey_model.normalize(route, after_trip) if route is not None else None;
+    draft_warnings: list[str] = [];
+    if require_travel and relaxed and after_trip.get("departure_location") and journey is None {
+        raise ValueError("Use the basic trip template when the AI omits its route.");
+    }
+    if require_travel and not relaxed {
+        journey_model.require_trip_travel(journey, state["trip"] if preserve_budget else after_trip, state.get("journey"));
+    }
     journey_changed = journey != state.get("journey");
     if journey is not None {
         journey = journey_model.normalize(journey, after_trip);
@@ -160,7 +198,7 @@ def check_plan(state: dict[str, any], facts: dict[str, any], plan: dict[str, any
     if not isinstance(plan.get("summary"), str) or len(plan["summary"]) > 5000 { raise ValueError("Invalid plan explanation."); }
     original = {i["id"]: i for i in state["items"]}; nodes = copy.deepcopy(original);
     augmented = copy.deepcopy(state); augmented["trip"] = after_trip; augmented["journey"] = journey;
-    changes = []; displayed = []; seen = `set(); missing_price = False;
+    changes = []; displayed = []; timing_adjustments = []; omitted_items = []; seen = `set(); missing_price = False;
     for (index, raw) in enumerate(plan["changes"]) {
         if not isinstance(raw, dict) { raise ValueError("Invalid itinerary change."); }
         item_id = raw.get("item_id");
@@ -189,17 +227,48 @@ def check_plan(state: dict[str, any], facts: dict[str, any], plan: dict[str, any
         base.update({k: raw[k] for k in ["title", "category", "date", "time", "location", "duration_minutes", "notes"]});
         base["cost_cents"] = cost if cost is not None else 0;
         if journey is not None {
-            detail = raw.get("journey") or {key: raw.get(key, "") for key in ["stop_id", "leg_id", "arrival_date", "arrival_time"]};
+            detail = copy.deepcopy(raw.get("journey")) or {key: raw.get(key, "") for key in ["stop_id", "leg_id", "arrival_date", "arrival_time"]};
+            if calculate_transport and raw["category"] == "transport" and detail.get("leg_id") {
+                try { elapsed = journey_model.transport_duration(base, detail, journey); }
+                except ValueError {
+                    if not relaxed { raise; }
+                    detail = schedule.estimated_arrival(base, detail, journey);
+                    elapsed = base["duration_minutes"];
+                    base["notes"] = (base["notes"][:2250] + "\nArrival is an unverified estimate calculated from the proposed travel duration.");
+                    timing_adjustments.append(base["title"] + ": used an estimated arrival because the supplied local times were incomplete or inconsistent.");
+                }
+                if elapsed != base["duration_minutes"] {
+                    timing_adjustments.append(base["title"] + ": calculated " + str(elapsed) + " minutes from local departure/arrival times and time zones (AI estimated " + str(base["duration_minutes"]) + ").");
+                    base["duration_minutes"] = elapsed;
+                }
+            }
             base["journey"] = journey_model.bind(base, detail, journey);
         }
+        base["flight"] = flight_details.checked(raw.get("flight"), base, after_trip["currency"], flight_sources or []);
         if not before { augmented["items"].append(copy.deepcopy(base)); }
         nodes[key] = base; changes.append({"item_id": key});
         displayed.append({"item_id": item_id, "before": before, "after": base, "price_unknown": cost is None});
     }
-    # Reuse the existing graph, fixed-item, overlap, latest-start and budget rules.
+    if relaxed and journey is not None {
+        for item in schedule.estimated_flights(nodes, journey, after_trip) {
+            augmented["items"].append(copy.deepcopy(item)); changes.append({"item_id": item["id"]});
+            displayed.append({"item_id": "", "before": None, "after": item, "price_unknown": item["cost_cents"] == 0});
+            timing_adjustments.append(item["title"] + ": included as a planning allowance because no matching flight was supplied.");
+        }
+    }
+    # Strict service callers retain the scheduler; draft mode keeps the itinerary.
     reserve = facts.get("reserve_minor", 0);
     if type(reserve) is not int or reserve < 0 { raise ValueError("Invalid contingency reserve."); }
-    for item in nodes.values() {
+    if calculate_transport and not relaxed {
+        fitted = schedule.fit_optional(nodes, [row["after"]["id"] for row in displayed if not row["item_id"]], journey, after_trip["budget_cents"], reserve,
+            [row["after"]["id"] for row in displayed if row["item_id"] and row["after"]["category"] in ["food", "activity"]], original);
+        timing_adjustments.extend(fitted["adjustments"]); omitted_items = fitted["omitted"];
+        displayed = [row for row in displayed if row["after"]["id"] in nodes and row["after"]["id"] not in fitted["reverted"]];
+        changes = [change for change in changes if change["item_id"] in nodes and change["item_id"] not in fitted["reverted"]];
+        augmented["items"] = [item for item in augmented["items"] if item["id"] in nodes];
+    }
+    missing_price = any(row["price_unknown"] for row in displayed);
+    for item in ([] if relaxed else nodes.values()) {
         if item["date"] and not after_trip["start_date"] <= item["date"] <= after_trip["end_date"] {
             raise ValueError("Move " + item["title"] + " into the proposed trip dates in this same plan, or keep dates that include it.");
         }
@@ -207,28 +276,57 @@ def check_plan(state: dict[str, any], facts: dict[str, any], plan: dict[str, any
             raise ValueError("An item ends after the proposed trip return date.");
         }
     }
-    journey_issues = journey_model.validate(journey, after_trip, list(nodes.values()), complete=bool(changes)) if journey else [];
-    total = validate(augmented, nodes, changes, reserve) if changes else sum(i["cost_cents"] for i in nodes.values()) + reserve;
-    if "budget_cents" in delta and after_trip["budget_cents"] and total > after_trip["budget_cents"] { raise ValueError("Existing costs exceed the proposed budget. Include lower-cost item changes or choose a larger budget."); }
+    complete_route = (require_travel and bool(after_trip.get("departure_location"))) or (bool(plan["changes"]) if calculate_transport else bool(changes));
+    journey_issues = []; total = sum(i["cost_cents"] for i in nodes.values()) + reserve;
+    if not relaxed {
+        if journey { journey_issues = journey_model.validate(journey, after_trip, list(nodes.values()), complete=complete_route); }
+        if changes { total = validate(augmented, nodes, changes, reserve); }
+    }
+    if after_trip["budget_cents"] and total > after_trip["budget_cents"] and ("budget_cents" in delta or (calculate_transport and plan["changes"])) {
+        if not relaxed { raise ValueError("Required saved arrangements and contingency exceed the current budget; optional omissions cannot resolve this conflict."); }
+        draft_warnings.append("The estimated total exceeds your saved budget; adjust it before booking.");
+    }
     labels = {"title": "Trip name", "destination": "Destination", "departure_location": "Departing from", "return_location": "Return to", "start_date": "Departure date", "end_date": "Return date", "currency": "Currency", "budget_cents": "Budget", "notes": "Trip notes"};
     return {"title": plan["title"].strip(), "summary": plan["summary"], "changes": displayed,
-        "journey": journey, "journey_changed": journey_changed,
+        "journey": journey, "journey_changed": journey_changed, "preserve_budget": preserve_budget, "require_travel": require_travel, "flight_sources": flight_sources or [], "relaxed": relaxed,
         "trip_changes": delta, "trip_before": state["trip"], "trip_after": after_trip,
         "trip_edits": [{"field": key, "label": labels[key], "before": state["trip"][key], "after": value} for (key, value) in delta.items()],
         "original_total_cents": sum(i["cost_cents"] for i in original.values()) + reserve,
         "total_cents": None if missing_price else total, "reserve_cents": reserve,
-        "checks": (["City order, transport coverage, local time zones and transfer buffers"] if journey and changes else []) + (["Trip details"] if delta else []) + (["Trip dates", "Schedule overlaps", "Dependencies and fixed items"] if changes else ["Itinerary date bounds"]) + (["Budget and reserve"] if not missing_price and (changes or "budget_cents" in delta) else []),
+        "checks": ["Estimated itinerary — review before booking"] if relaxed else (["City order, transport coverage, local time zones and transfer buffers"] if journey and changes else []) + (["Trip details"] if delta else []) + (["Trip dates", "Schedule overlaps", "Dependencies and fixed items"] if changes else ["Itinerary date bounds"]) + (["Budget and reserve"] if not missing_price and (changes or "budget_cents" in delta) else []),
         "issues": ["Some prices are unknown. Ask for a revised estimate before saving."] if missing_price else [],
-        "warnings": journey_issues + ["AI prices are estimates, not live quotes. Confirm availability, opening hours, travel times and traveler eligibility before booking."] + (["Changing trip dates or locations requires fresh checks of hours, routes and reservations."] if any(key in delta for key in ["start_date", "end_date", "destination", "departure_location", "return_location"]) else []),
+        "omitted_items": omitted_items, "timing_adjustments": timing_adjustments, "warnings": omitted_items + timing_adjustments + journey_issues + draft_warnings + ["AI prices are estimates, not live quotes. Confirm availability, opening hours, travel times and traveler eligibility before booking."] + (["Changing trip dates or locations requires fresh checks of hours, routes and reservations."] if any(key in delta for key in ["start_date", "end_date", "destination", "departure_location", "return_location"]) else []),
         "can_apply": not missing_price};
 }
 
 def finish(conn: any, trip_id: str, request_id: str, message: str, mode: str,
-    captured: dict[str, any], result: dict[str, any]) -> dict[str, any] {
+    captured: dict[str, any], result: any) -> dict[str, any] {
+    relaxed = bool(captured["context"].get("draft_only")); fallback_allowed = relaxed and mode in ["plan", "backup", "replan"];
+    if fallback_allowed {
+        result = result if isinstance(result, dict) else {};
+        result = {"answer": result.get("answer") if isinstance(result.get("answer"), str) else "Prepared an estimated trip.",
+            "plans": result.get("plans", [])[:3] if isinstance(result.get("plans"), list) else [],
+            "sources": [source for source in result.get("sources", []) if isinstance(source, dict)] if isinstance(result.get("sources"), list) else [],
+            "research": result.get("research") if isinstance(result.get("research"), str) else "", "mode": mode};
+    }
     drafts = []; issues = [];
     for plan in result.get("plans", []) {
-        try { drafts.append(check_plan(captured["state"], captured["facts"], plan)); }
-        except (ValueError, KeyError, TypeError) as error { issues.append(str(error)); }
+        if fallback_allowed and drafts { break; }
+        try { drafts.append(check_plan(captured["state"], captured["facts"], plan, captured.get("automatic", False), True, mode in ["plan", "backup", "replan"], result.get("sources", []), bool(captured["context"].get("draft_only")))); }
+        except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error { issues.append(str(error)); }
+    }
+    if fallback_allowed and not drafts {
+        basic = fallback_planner.proposal(captured["state"], captured["facts"], mode);
+        draft = check_plan(captured["state"], captured["facts"], basic, True, True, True, [], True);
+        draft["fallback"] = True;
+        draft["warnings"].insert(0, "Basic itinerary created from your saved trip details. Activities, travel times and costs are unverified planning estimates.");
+        drafts.append(draft); issues = [];
+    }
+    skipped = result.get("skipped_options", []) + issues;
+    if drafts and skipped {
+        for draft in drafts {
+            draft["warnings"].extend(["Another option was left out: " + reason for reason in skipped]);
+        }
     }
     conn.execute("BEGIN IMMEDIATE");
     state = snapshot(conn, trip_id); facts = planning_facts(conn, trip_id);
@@ -236,13 +334,42 @@ def finish(conn: any, trip_id: str, request_id: str, message: str, mode: str,
     stamp = now(); expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat();
     for draft in drafts {
         draft["mode"] = result.get("mode", mode);
+        if captured["context"].get("search_flights") {
+            for change in draft["changes"] {
+                if change["after"].get("journey", {}).get("mode") == "flight" and not change["after"].get("flight") {
+                    draft["warnings"].append(change["after"]["title"] + ": no matching dated flight listing was attached; schedule and fare remain planning estimates.");
+                }
+            }
+        }
         conn.execute("INSERT INTO assistant_drafts VALUES (?,?,?,?,?,?,?,?)",
             (str(uuid4()), trip_id, request_id, captured["state"]["version"], captured["fingerprint"],
                 json.dumps(draft), "stale" if stale else "pending", expires));
     }
     payload = {"sources": result.get("sources", []), "research": result.get("research", ""),
-        "mode": mode, "issues": issues, "stale": stale};
-    for (role, text, data) in [("user", message, {"mode": mode}), ("assistant", result["answer"], payload)] {
+        "mode": mode, "issues": [] if drafts else issues, "stale": stale};
+    answer = result["answer"];
+    if issues and not drafts {
+        answer = "I could not prepare a valid draft after checking the proposed changes. Your saved itinerary is unchanged. See the timing or constraint details below.";
+    } elif drafts and skipped {
+        answer = "Prepared " + str(len(drafts)) + " valid trip option(s) for review. Another option could not be completed and was left out; your saved itinerary is unchanged.";
+    } elif any(draft.get("omitted_items") for draft in drafts) {
+        answer = "Prepared a simplified trip draft with the required travel and feasible arrangements. Some optional meals or activities were left out to preserve travel buffers, saved arrangements and the budget. Review the omissions listed in the draft before saving.";
+    } elif any(draft.get("timing_adjustments") for draft in drafts) {
+        answer = "Prepared a draft with timing adjustments calculated around the journey’s transport and transfer buffers. Review the changes and estimates before saving.";
+    }
+    if drafts and captured["context"].get("search_flights") and captured["context"]["trip"].get("departure_location") {
+        sourced = sum(1 for draft in drafts for change in draft["changes"] if change["after"].get("flight"));
+        answer = "Prepared a trip with web-sourced flight details; confirm fares and availability with the airline." if sourced else "Prepared a trip, but no matching dated flight listings were attached; flight schedules and fares remain estimates.";
+        if any(draft.get("timing_adjustments") for draft in drafts) { answer += " Timing adjustments were calculated for the trip."; }
+        if any(draft.get("omitted_items") for draft in drafts) { answer += " This is a simplified trip draft; optional omissions are listed below."; }
+        if skipped { answer += " Prepared " + str(len(drafts)) + " valid trip option(s); another option was left out."; }
+    }
+    if any(draft.get("fallback") for draft in drafts) {
+        answer = "Here’s a basic estimated trip based on your saved details. The AI could not finish its draft, so this gives you a starting itinerary to review and edit.";
+    }
+    messages = [("assistant", answer, payload)];
+    if not captured.get("automatic", False) { messages.insert(0, ("user", message, {"mode": mode})); }
+    for (role, text, data) in messages {
         conn.execute("INSERT INTO assistant_messages VALUES (?,?,?,?,?,?)", (str(uuid4()), trip_id, role, text, json.dumps(data), stamp));
     }
     conn.execute("UPDATE assistant_requests SET status='complete' WHERE id=? AND trip_id=?", (request_id, trip_id));
@@ -270,7 +397,7 @@ def update_prices(conn: any, trip_id: str, draft_id: str, prices: dict[str, any]
     raw = {"title": draft["title"], "summary": draft["summary"], "trip_changes": draft.get("trip_changes", {}), "journey": draft.get("journey"), "changes": [
         {**change["after"], "item_id": change["item_id"], "cost_cents": None if change["price_unknown"] else change["after"]["cost_cents"]}
         for change in draft["changes"]]};
-    checked = check_plan(state, facts, raw); checked["mode"] = draft["mode"];
+    checked = check_plan(state, facts, raw, draft.get("preserve_budget", False), False, draft.get("require_travel", False), draft.get("flight_sources", []), draft.get("relaxed", False)); checked["mode"] = draft["mode"];
     conn.execute("UPDATE assistant_drafts SET payload=? WHERE id=? AND trip_id=?", (json.dumps(checked), draft_id, trip_id));
     conn.commit(); return read(conn, trip_id);
 }
@@ -291,7 +418,7 @@ def review(conn: any, trip_id: str, draft_id: str, accept: bool, acknowledged: b
         raw = {"title": draft["title"], "summary": draft["summary"], "trip_changes": draft.get("trip_changes", {}), "journey": draft.get("journey"), "changes": [
             {**change["after"], "item_id": change["item_id"], "cost_cents": None if change["price_unknown"] else change["after"]["cost_cents"]}
             for change in draft["changes"]]};
-        checked = check_plan(state, facts, raw);
+        checked = check_plan(state, facts, raw, draft.get("preserve_budget", False), False, draft.get("require_travel", False), draft.get("flight_sources", []), draft.get("relaxed", False));
         if not checked["can_apply"] { raise ValueError("Resolve unknown prices before saving this draft."); }
         if checked["trip_changes"] {
             trip = checked["trip_after"];
@@ -315,6 +442,7 @@ def review(conn: any, trip_id: str, draft_id: str, accept: bool, acknowledged: b
                     (item_id, trip_id, item["title"], item["category"], item["date"], item["time"], item["location"], "", note, item["cost_cents"]));
             }
             journey_model.write_item(conn, item_id, item.get("journey", {}));
+            flight_details.write(conn, item_id, item);
             conn.execute("INSERT INTO replan_rules(item_id,duration_minutes) VALUES (?,?) ON CONFLICT(item_id) DO UPDATE SET duration_minutes=excluded.duration_minutes",
                 (item_id, item["duration_minutes"]));
         }

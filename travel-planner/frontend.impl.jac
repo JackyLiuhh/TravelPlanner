@@ -60,10 +60,10 @@ impl app.refresh -> None {
 }
 impl app.chooseTrip(trip_id: str) -> None {
     if busy or loading { return; }
-    resetReview(); selected = trip_id; items = []; day = ""; tab = "itinerary";
+    resetReview(); selected = trip_id; items = []; journeyData = {}; day = ""; tab = "itinerary";
     railView = "auto"; placeId = "";
     trip_form = False; notice = ""; revisionNotice = ""; resetItem();
-    aiData = {}; aiCompose = 0; aiText = "";
+    aiData = {}; aiWorking = False; aiMode = "ask"; aiAutoRun = False; aiCompose = 0; aiText = "";
     await refresh();
 }
 impl app.submitTrip(e: FormEvent) -> None {
@@ -78,7 +78,7 @@ impl app.submitTrip(e: FormEvent) -> None {
         saved = await save_trip(title=trip_title, destination=destination, start_date=start_date,
             end_date=end_date, currency=currency, budget=budget, notes=trip_notes, trip_id=editing_trip,
             departure_location=departure_location, return_location=return_location);
-        if selected != saved.id { aiData = {}; aiCompose = 0; tab = "planner"; }
+        if selected != saved.id { aiData = {}; aiWorking = False; aiMode = "ask"; aiAutoRun = False; aiCompose = 0; aiText = ""; tab = "planner"; }
         resetReview(); selected = saved.id; trip_form = False; day = ""; resetItem();
         await refresh(); notice = "Trip saved.";
     } except Exception as exc { error = str(exc); }
