@@ -33,30 +33,12 @@ const apiUrl = process.env.TRAVEL_API_URL || appUrl + '/api/server';
       assert.equal(await marker(direction).getAttribute('data-estimated'), 'true');
       const path = map().locator('.map-route-hit[data-direction="' + direction + '"]');
       assert(!/NaN|Infinity|undefined/.test(await path.getAttribute('d')), 'Route path must have finite coordinates');
-      // Hit-paths are transparent; verify the actual colored canvas stroke is painted too.
-      await page.waitForFunction(direction => {
-        const region = document.querySelector('.trip-map');
-        const canvas = region?.querySelector('canvas');
-        const path = region?.querySelector('.map-route-hit[data-direction="' + direction + '"]');
-        if (!canvas || !path || !canvas.width || !canvas.clientWidth) return false;
-        const context = canvas.getContext('2d'), ratio = canvas.width / canvas.clientWidth;
-        let painted = 0;
-        for (const fraction of [0.12, 0.18, 0.24, 0.30, 0.36, 0.64, 0.70, 0.76, 0.82, 0.88]) {
-          const point = path.getPointAtLength(path.getTotalLength() * fraction);
-          const x = Math.round(point.x * ratio), y = Math.round(point.y * ratio), radius = Math.ceil(3 * ratio);
-          if (x < radius || y < radius || x + radius >= canvas.width || y + radius >= canvas.height) continue;
-          const pixels = context.getImageData(x - radius, y - radius, radius * 2 + 1, radius * 2 + 1).data;
-          let found = false;
-          for (let i = 0; i < pixels.length; i += 4) {
-            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
-            if (direction === 'Departure' ? g > 140 && b > 160 && g - r > 25 : r > 130 && b > 170 && b - g > 35) {
-              found = true; break;
-            }
-          }
-          if (found) painted++;
-        }
-        return painted >= 4;
-      }, direction);
+      // Leaflet routes have a visible SVG stroke plus a wider transparent hit target.
+      const visible = map().locator('.map-route-line[data-direction="' + direction + '"]');
+      await visible.waitFor();
+      assert.equal(await visible.getAttribute('d'), await path.getAttribute('d'));
+      assert(await visible.evaluate(p => p.getTotalLength() > 20 &&
+        getComputedStyle(p).stroke !== 'none' && Number(getComputedStyle(p).strokeWidth.replace('px', '')) > 2));
     }
     assert.equal(await map().locator('animateMotion, .planning-plane').count(), 0);
   }
