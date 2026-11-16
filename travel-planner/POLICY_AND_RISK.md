@@ -36,6 +36,7 @@ that can `import subprocess`) and rerun: `<python3.14> -m venv .jac/venv && jac 
 | `policy/extract_rules.jac` | Rule-based fallback extractor for common phrasings |
 | `policy/cancellation.jac` | What cancelling now refunds, and when terms next change |
 | `risk/rules.jac`, `risk/analyzer.jac`, `risk/config.jac` | Risk rules, the analyzer entry point, tunable thresholds |
+| `risk/delay.jac` | Delay impact: carries a late item forward through the items linked after it |
 | `fixtures/demo-trip.json` | Synthetic Denver family trip that exercises every rule |
 
 `schema/` is a **proposal** for the shared contracts in `docs/ARCHITECTURE.md`; it
@@ -76,6 +77,24 @@ or payment details. Tests use `MockLLM`.
 A rule that cannot evaluate an item for lack of evidence emits an **unresolved**
 flag rather than treating it as safe.
 
+## Delay impact
+
+`delay_impact(bundle, node_id, delay_minutes)` answers "my flight is three hours
+late, what does that break?" It follows `precedes`/`depends_on` links from the
+late item and uses the same time needed between items as `tight_connection`.
+Each later item comes back as:
+
+- `pushed`: it can't start on time; includes how late and the earliest new start.
+  A stay checks in later but keeps its checkout.
+- `on_time`: it still fits, with the minutes to spare.
+- `unresolved`: a start or end time is missing, so the effect can't be checked.
+- `not_linked`: it's later the same day but has no link to the late item, so it
+  isn't checked. It's listed so it isn't mistaken for fine.
+
+On the demo trip a 3-hour flight delay pushes the car pickup by 200 min and the
+hotel check-in by 30 min; the Moab drive after checkout is unaffected, and dinner
+is listed as not linked.
+
 ## Conventions
 
 - Money is integer minor units with an explicit currency; percentage refunds round down.
@@ -96,4 +115,4 @@ flag rather than treating it as safe.
 ## Next
 
 - Optional bounded LLM classification for indoor/outdoor activities.
-- Risk/policy panel in the web UI.
+- Show delay impact in the web UI's disruption flow (#12).
