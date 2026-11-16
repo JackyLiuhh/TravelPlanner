@@ -69,6 +69,17 @@ test "without a forecast an outdoor activity is unresolved" {
     assert flag.status == FlagStatus.UNRESOLVED and "no forecast" in flag.summary;
 }
 
+test "a forecast without a precipitation chance is unresolved, not dry" {
+    data = fixture_data();
+    data["forecasts"][0]["precip_probability_pct"] = None;
+    flag = [f for f in analyze_trip(bundle_from_dict(data), NOW) if f.rule_id == "weather_exposure"][0];
+    assert flag.status == FlagStatus.UNRESOLVED and flag.severity == Severity.LOW;
+    assert flag.probability_pct is None;
+    assert "doesn't say how likely rain or snow is" in flag.summary;
+    assert "no chance" not in flag.summary;
+    assert flag.evidence_ids == ["ev-forecast-1031"];
+}
+
 test "thresholds come from configuration" {
     relaxed = RiskConfig(long_drive_minutes=360, deadline_soon_hours=24);
     ids = flag_ids(analyze_trip(load_bundle(FIXTURE), NOW, relaxed));

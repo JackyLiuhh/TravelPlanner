@@ -118,7 +118,7 @@ def check_weather(bundle: TripBundle, config: RiskConfig, now: datetime) -> list
         known = [f for f in matching if f.precip_probability_pct is not None];
         if not known {
             summary = (f"Outdoor activity {n.title} has no forecast for its time yet." if not matching
-                else f"The forecast for outdoor activity {n.title} gives no chance of rain or snow.");
+                else f"The forecast for outdoor activity {n.title} doesn't say how likely rain or snow is.");
             flags.append(_flag(rule, RiskCategory.WEATHER, Severity.LOW, FlagStatus.UNRESOLVED, [n.id],
                 summary,
                 "Check the forecast closer to the date and keep an indoor option in mind.",
