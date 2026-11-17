@@ -6,6 +6,7 @@ def:pub createStreetMap(element: any, onMove: any, onError: any) -> any {
         "scrollWheelZoom": False, "worldCopyJump": True, "minZoom": 2, "maxZoom": 19});
     result.setView([25, 0], 2);
     tiles: any = tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        "referrerPolicy": "strict-origin-when-cross-origin",
         "maxZoom": 19, "attribution": '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'});
     tiles.on("tileerror", lambda { onError(True); });
     tiles.on("tileload", lambda { onError(False); });
